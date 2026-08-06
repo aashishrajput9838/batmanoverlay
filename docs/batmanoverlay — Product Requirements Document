@@ -1,0 +1,2484 @@
+# batmanoverlay — Product Requirements Document
+
+> **Document Version:** 1.0.0
+> **Date:** 2026-08-07
+> **Status:** Draft — Pending Stakeholder Approval
+> **Classification:** Internal — Engineering & Product
+> **Author:** Principal Software Architect / Senior Product Manager
+
+---
+
+## Document Control
+
+| Field | Value |
+|---|---|
+| Product Name | batmanoverlay |
+| Product Type | Portable Windows Desktop Application |
+| Target Platforms | Windows 10 (1809+), Windows 11 |
+| Distribution Model | Portable executable (no installer) |
+| License Model | TBD (see Open Questions §25) |
+| Primary Language | English (internationalization-ready) |
+
+### Revision History
+
+| Version | Date | Author | Change Summary |
+|---|---|---|---|
+| 1.0.0 | 2026-08-07 | Architect | Initial PRD |
+
+---
+
+## Table of Contents
+
+1. [Executive Summary](#1-executive-summary)
+2. [Vision](#2-vision)
+3. [Goals](#3-goals)
+4. [Non-Goals](#4-non-goals)
+5. [Personas](#5-personas)
+6. [User Stories](#6-user-stories)
+7. [Functional Requirements](#7-functional-requirements)
+8. [Non-Functional Requirements](#8-non-functional-requirements)
+9. [UX Specification](#9-ux-specification)
+10. [UI Specification](#10-ui-specification)
+11. [Technical Architecture](#11-technical-architecture)
+12. [Technology Evaluation](#12-technology-evaluation)
+13. [Database Design](#13-database-design)
+14. [Storage Strategy](#14-storage-strategy)
+15. [Security Design](#15-security-design)
+16. [Performance Strategy](#16-performance-strategy)
+17. [Accessibility](#17-accessibility)
+18. [Error Handling](#18-error-handling)
+19. [Logging](#19-logging)
+20. [Testing Strategy](#20-testing-strategy)
+21. [Deployment Strategy](#21-deployment-strategy)
+22. [Risks](#22-risks)
+23. [Assumptions](#23-assumptions)
+24. [Future Roadmap](#24-future-roadmap)
+25. [Open Questions](#25-open-questions)
+26. [Appendix](#26-appendix)
+
+---
+
+# 1. Executive Summary
+
+**batmanoverlay** is a portable, lightweight Windows desktop productivity and presentation assistant. It embeds a Chromium-based browser so users can access web-based tools — ChatGPT, Claude, Gemini, Google Docs, Google Sheets, Notion, and others — from a single, always-on-top floating window. Users can copy useful text into a persistent smart clipboard, organize snippets into workspaces, and replay them into any target application via configurable character-by-character keyboard simulation.
+
+The product targets teachers, workshop speakers, trainers, students, developers, technical presenters, researchers, content writers, customer support teams, and accessibility users. It solves the common workflow pain of context-switching between a browser and a presentation or editing application: instead of Alt-Tab and Ctrl+V, users keep batmanoverlay visible, browse content, copy what they need, and type it naturally into the target window at a speed they control.
+
+### Key Differentiators
+
+| Differentiator | Detail |
+|---|---|
+| **Portable** | Single-folder distribution; no installer, no admin rights, no registry writes. |
+| **Integrated Browser** | Full Chromium engine with multi-tab, login persistence, bookmarks, and downloads. |
+| **Smart Clipboard** | Searchable, categorizable, pinnable clipboard history with unlimited retention. |
+| **Character Typing** | Simulates realistic keyboard input at adjustable speed (10 levels), with pause/resume/cancel. |
+| **Workspaces** | Isolated sessions that remember browser tabs, clipboard, typing settings, and window geometry. |
+| **Always-on-Top Float** | Configurable opacity, collapsible, draggable overlay that stays visible during presentations. |
+
+### Security Posture
+
+> [!IMPORTANT]
+> batmanoverlay is a standard Windows desktop application. It does **not** hide itself, impersonate system processes, inject into other processes, hook APIs, manipulate memory, require admin privileges, install drivers, or interfere with any security mechanism. See §15 for the complete security design.
+
+---
+
+# 2. Vision
+
+**Enable professionals and learners to seamlessly bridge web-based knowledge and desktop workflows through a transparent, honest, and highly performant productivity overlay.**
+
+batmanoverlay envisions a world where users no longer lose focus switching between a browser and their working application. Whether a teacher is pulling notes from Google Docs during a live class, a developer is transferring a ChatGPT code snippet into their IDE, or a support agent is pasting a Notion runbook into a ticket — batmanoverlay provides a single, persistent, non-intrusive window that floats beside the user's primary application and feeds content into it naturally.
+
+### Vision Principles
+
+1. **Transparency over stealth.** The application is always visible and identifiable. It never hides.
+2. **User agency.** The user controls what is typed, when, how fast, and where. Nothing is automated without explicit user action.
+3. **Zero-install simplicity.** Drop the folder on a USB stick, a shared drive, or a laptop — it works.
+4. **Privacy-first.** All data stays local. No telemetry, no cloud sync, no accounts.
+5. **Extensibility.** The architecture supports future plugins, themes, and integrations without core rewrites.
+
+---
+
+# 3. Goals
+
+### 3.1 Product Goals
+
+| ID | Goal | Success Metric |
+|---|---|---|
+| G-01 | Provide a portable, zero-install Windows application | Runs from a folder on a clean Windows 10/11 machine without admin rights |
+| G-02 | Embed a fully functional Chromium browser | Users can log into ChatGPT, Claude, Gemini, Google Docs, Notion and maintain sessions |
+| G-03 | Offer a smart clipboard with search, categories, and pins | Users can retrieve any previously copied snippet within 2 seconds |
+| G-04 | Simulate character-by-character typing into target applications | Text appears in the target application indistinguishable from human typing at the selected speed |
+| G-05 | Support workspaces for context isolation | Users can switch between workshop, class, or project contexts without losing state |
+| G-06 | Float as a non-intrusive overlay | Window stays on top with configurable opacity (10%–100%) and can collapse to a minimal bar |
+| G-07 | Achieve fast startup and low resource usage | Cold start < 5 s; idle RAM < 200 MB; idle CPU < 2% |
+| G-08 | Be fully keyboard-navigable and screen-reader compatible | Passes WCAG 2.1 AA for desktop applications |
+
+### 3.2 Business Goals
+
+| ID | Goal |
+|---|---|
+| BG-01 | Establish batmanoverlay as a trusted, legitimate productivity tool |
+| BG-02 | Build a foundation for future paid features (cloud sync, team workspaces, plugin marketplace) |
+| BG-03 | Maintain an impeccable security reputation — no association with cheating or evasion tools |
+
+---
+
+# 4. Non-Goals
+
+The following are explicitly **out of scope** for this product. Each is accompanied by a justification.
+
+| ID | Non-Goal | Justification |
+|---|---|---|
+| NG-01 | Hiding the application from screen recording or screen sharing | Violates transparency principle; would associate the product with cheating tools |
+| NG-02 | Bypassing browser or application security mechanisms | Illegal in many jurisdictions; violates CFAA, DMCA, and equivalents |
+| NG-03 | Circumventing online examination or proctoring systems | Directly unethical; would expose users and the company to legal liability |
+| NG-04 | Evading anti-cheat or detection systems | Same as above |
+| NG-05 | Impersonating Windows system processes | Malware behavior; would trigger antivirus flags and destroy user trust |
+| NG-06 | Injecting code into, hooking, or manipulating memory of other processes | Requires admin privileges; malware behavior |
+| NG-07 | Requiring administrator privileges for normal operation | Reduces portability and increases security risk |
+| NG-08 | Installing drivers or kernel components | Incompatible with portability; requires admin; introduces stability risk |
+| NG-09 | Modifying Windows registry or system internals | Incompatible with portability; requires elevated privileges |
+| NG-10 | Cloud synchronization (v1) | Deferred to future roadmap to limit v1 scope and keep data local |
+| NG-11 | Mobile or macOS/Linux support (v1) | Windows-first; cross-platform deferred to future roadmap |
+| NG-12 | Plugin/extension system (v1) | Architecture will be plugin-ready, but the runtime and API are deferred |
+| NG-13 | Real-time collaboration | Out of scope for a local-only tool |
+| NG-14 | AI-powered features (summarization, auto-complete) | Users access AI through the embedded browser; the host app does not add its own AI layer |
+| NG-15 | Privilege escalation of any kind | Security non-negotiable |
+
+---
+
+# 5. Personas
+
+### 5.1 Persona: Maya — Workshop Speaker
+
+| Attribute | Detail |
+|---|---|
+| Role | Corporate trainer delivering 2-day workshops |
+| Age | 34 |
+| Tech Comfort | High |
+| Pain Points | Switching between Google Slides, a browser with ChatGPT, and a code editor during live demos; losing flow when Alt-Tabbing |
+| Goal | Keep notes and AI responses visible beside her presentation; type code into the IDE naturally |
+| batmanoverlay Usage | Floats at 40% opacity beside the projector view; copies ChatGPT responses into the smart clipboard; types them into VS Code at speed 4 |
+
+### 5.2 Persona: Raj — University Teacher
+
+| Attribute | Detail |
+|---|---|
+| Role | Computer Science lecturer |
+| Age | 45 |
+| Tech Comfort | Medium |
+| Pain Points | Needs to reference Google Docs lesson plans while coding live in class; students see the secondary screen |
+| Goal | A semi-transparent overlay with his notes that he can glance at while coding |
+| batmanoverlay Usage | Opens Google Docs in the embedded browser; sets window to 25% opacity; reads notes while coding in the terminal; occasionally types a prepared snippet |
+
+### 5.3 Persona: Aisha — Student & Researcher
+
+| Attribute | Detail |
+|---|---|
+| Role | Graduate student writing a thesis |
+| Age | 26 |
+| Tech Comfort | High |
+| Pain Points | Needs to cross-reference multiple papers (Google Scholar, Notion, Claude) and transfer citations into LaTeX |
+| Goal | A persistent sidebar with her research sources and a clipboard to collect citations |
+| batmanoverlay Usage | Creates a "Thesis" workspace; opens Claude, Google Scholar, and Notion in tabs; copies citations into the smart clipboard with category "References"; types them into Overleaf |
+
+### 5.4 Persona: Carlos — Customer Support Lead
+
+| Attribute | Detail |
+|---|---|
+| Role | Support team lead at a SaaS company |
+| Age | 38 |
+| Tech Comfort | Medium |
+| Pain Points | Copies the same troubleshooting steps from Notion into Zendesk 50 times a day; paste formatting breaks |
+| Goal | A clipboard of pre-formatted troubleshooting steps that type cleanly into any web form |
+| batmanoverlay Usage | Pins 20 most common responses; uses character typing to insert them into Zendesk without formatting artifacts |
+
+### 5.5 Persona: Priya — Accessibility User
+
+| Attribute | Detail |
+|---|---|
+| Role | Data analyst with repetitive strain injury |
+| Age | 31 |
+| Tech Comfort | High |
+| Pain Points | Cannot type long texts without pain; needs to dictate and then replay into non-accessible applications |
+| Goal | Prepare text in an accessible environment and then have batmanoverlay type it into legacy enterprise apps that don't support paste |
+| batmanoverlay Usage | Prepares text via voice-to-text in Google Docs inside the embedded browser; copies to clipboard; types into the legacy app at speed 2 |
+
+---
+
+# 6. User Stories
+
+User stories follow the format: *As a [persona], I want to [action], so that [benefit].*
+
+### 6.1 Browser Stories
+
+| ID | Story | Priority | Acceptance Criteria |
+|---|---|---|---|
+| US-B01 | As Maya, I want to open ChatGPT in a tab, so that I can query AI without leaving my presentation | P0 | ChatGPT loads, login persists across sessions, responses render correctly |
+| US-B02 | As Raj, I want to open Google Docs in a tab, so that I can read my lecture notes | P0 | Google Docs renders fully, including formatting, images, and tables |
+| US-B03 | As Aisha, I want to open multiple tabs simultaneously, so that I can cross-reference sources | P0 | ≥10 tabs open without crash; tab bar scrolls when full |
+| US-B04 | As Carlos, I want to bookmark frequently used Notion pages, so that I can access them instantly | P1 | Bookmarks persist across sessions; organized in folders |
+| US-B05 | As Maya, I want to navigate back and forward, so that I can revisit pages | P0 | Standard browser navigation works as expected |
+| US-B06 | As Aisha, I want to download PDFs from Google Scholar, so that I can save papers | P1 | Downloads save to a configurable folder; progress shown |
+| US-B07 | As Raj, I want to view PDFs in-browser, so that I don't need an external viewer | P1 | PDF renders inline with zoom and scroll |
+| US-B08 | As Carlos, I want cookies and local storage to persist, so that I stay logged in | P0 | After closing and reopening batmanoverlay, all sessions remain active |
+
+### 6.2 Clipboard Stories
+
+| ID | Story | Priority | Acceptance Criteria |
+|---|---|---|---|
+| US-C01 | As Maya, I want to copy selected text from the browser into the smart clipboard, so that I can use it later | P0 | Selected text appears in clipboard panel with timestamp |
+| US-C02 | As Carlos, I want to search my clipboard history, so that I can find a response I copied yesterday | P0 | Full-text search returns results within 200 ms for ≤10,000 entries |
+| US-C03 | As Carlos, I want to pin favorite snippets, so that they stay at the top | P0 | Pinned items persist across sessions and appear first |
+| US-C04 | As Aisha, I want to categorize clipboard entries (e.g., "References", "Quotes"), so that I can organize research | P1 | Categories are user-defined; entries can belong to multiple categories |
+| US-C05 | As Aisha, I want to add notes to a clipboard entry, so that I remember context | P1 | Free-text note field per entry; searchable |
+| US-C06 | As Maya, I want to delete old clipboard entries, so that I keep things tidy | P0 | Single and bulk delete supported with undo (30 s) |
+
+### 6.3 Typing Stories
+
+| ID | Story | Priority | Acceptance Criteria |
+|---|---|---|---|
+| US-T01 | As Maya, I want to type a snippet into VS Code character-by-character, so that it looks like I'm typing live | P0 | Text appears in VS Code at the selected speed; no dropped characters |
+| US-T02 | As Raj, I want to adjust typing speed (1–10), so that I can match my speaking pace | P0 | Speed 1 ≈ 30 chars/min; speed 10 ≈ 600 chars/min (see §7.5 for calibration) |
+| US-T03 | As Maya, I want to pause typing mid-snippet, so that I can explain what's happening | P0 | Pause freezes the cursor position; resume continues from the exact character |
+| US-T04 | As Maya, I want to cancel typing, so that I can abort a mistake | P0 | Cancel stops immediately; remaining text is not typed |
+| US-T05 | As Carlos, I want to queue multiple snippets, so that I can type several responses in sequence | P1 | Queue displays order; drag-to-reorder; items type in sequence |
+| US-T06 | As Priya, I want to see a progress indicator and ETA, so that I know when typing will finish | P1 | Progress bar with percentage and "~X sec remaining" |
+| US-T07 | As Aisha, I want Unicode and multi-language support, so that I can type Arabic citations | P0 | RTL text, CJK, diacritics, and emoji type correctly |
+
+### 6.4 Workspace Stories
+
+| ID | Story | Priority | Acceptance Criteria |
+|---|---|---|---|
+| US-W01 | As Maya, I want to create a workspace for each workshop, so that tabs and clips don't mix | P0 | New workspace starts clean; previous workspace state is preserved |
+| US-W02 | As Aisha, I want to duplicate a workspace, so that I can fork a research context | P1 | Deep copy of all state including clipboard and settings |
+| US-W03 | As Raj, I want to export a workspace to a file, so that I can share it with a colleague | P2 | Exports to a `.bmw` (batmanoverlay workspace) zip file |
+| US-W04 | As Raj, I want to import a workspace, so that I can load a colleague's setup | P2 | Imports from `.bmw` file; validates integrity before loading |
+| US-W05 | As Maya, I want to switch workspaces quickly, so that I can move between workshops | P0 | Switch completes in < 1 s with no data loss |
+
+### 6.5 Window & Overlay Stories
+
+| ID | Story | Priority | Acceptance Criteria |
+|---|---|---|---|
+| US-O01 | As Maya, I want the window to float on top, so that it stays visible during presentations | P0 | Window remains above all other windows unless user disables |
+| US-O02 | As Raj, I want to adjust opacity (10%–100%), so that I can see through the overlay | P0 | Slider adjusts opacity in real time; value persists |
+| US-O03 | As Priya, I want to collapse the window to a small bar, so that it doesn't obstruct my screen | P1 | Collapse reduces to a title-bar-sized strip; expand restores full layout |
+| US-O04 | As Maya, I want the window to remember its position and size, so that I don't reposition it every time | P0 | Geometry saved per workspace; restored on next open |
+
+### 6.6 Settings & Hotkey Stories
+
+| ID | Story | Priority | Acceptance Criteria |
+|---|---|---|---|
+| US-S01 | As Maya, I want to configure global hotkeys, so that I can control typing without switching windows | P0 | Hotkeys work when batmanoverlay is not focused; conflicts detected |
+| US-S02 | As Raj, I want to change the theme (dark/light), so that the overlay matches my preference | P1 | Theme applies immediately; persists |
+| US-S03 | As Priya, I want to scale the UI font size, so that I can read comfortably | P1 | Font scale 80%–200%; applies to all panels |
+
+### 6.7 Session Stories
+
+| ID | Story | Priority | Acceptance Criteria |
+|---|---|---|---|
+| US-SS01 | As Aisha, I want the application to auto-save my session, so that I don't lose work | P0 | Session saved every 60 s and on graceful exit |
+| US-SS02 | As Raj, I want crash recovery, so that I can resume after an unexpected close | P0 | On restart after crash, user is prompted to restore the last session |
+| US-SS03 | As Maya, I want to export/import sessions for backup, so that I can safeguard my data | P2 | Full session export/import with integrity validation |
+
+---
+
+# 7. Functional Requirements
+
+Each module is specified with unique requirement IDs, acceptance criteria, and priority.
+
+**Priority Key:**
+- **P0** — Must-have for v1.0 launch
+- **P1** — Should-have for v1.0; may slip to v1.1
+- **P2** — Nice-to-have; planned for v1.1+
+
+---
+
+## 7.1 Module 1: Application Core
+
+### Purpose
+Provide the foundational runtime, lifecycle management, and portability infrastructure.
+
+| Req ID | Requirement | Priority | Acceptance Criteria |
+|---|---|---|---|
+| FR-AC-01 | The application MUST be distributed as a portable, self-contained folder (no installer) | P0 | Copy folder to a new machine → application launches without installation |
+| FR-AC-02 | The application MUST run on Windows 10 version 1809 and later, and Windows 11 | P0 | Tested on Windows 10 1809, 21H2, and Windows 11 23H2 |
+| FR-AC-03 | The application MUST NOT require administrator privileges for normal operation | P0 | Runs under a standard user account; no UAC prompt |
+| FR-AC-04 | The application MUST start within 5 seconds on a machine with an SSD and 8 GB RAM | P0 | Measured from process start to interactive UI |
+| FR-AC-05 | Idle RAM usage MUST be below 200 MB (excluding browser tab content) | P0 | Measured with 0 tabs open, idle for 60 s |
+| FR-AC-06 | Idle CPU usage MUST be below 2% | P0 | Measured with 0 tabs open, idle for 60 s |
+| FR-AC-07 | The application MUST store all user data in a `data/` subdirectory relative to the executable | P0 | No writes to AppData, registry, or temp unless OS-mandated (e.g., Chromium cache) |
+| FR-AC-08 | The application MUST support running multiple instances simultaneously | P2 | Each instance operates independently; no port conflicts |
+| FR-AC-09 | The application MUST display a splash screen during initialization | P1 | Splash shows logo, version, and loading progress |
+| FR-AC-10 | The application MUST expose a `--version` CLI argument | P1 | Prints version string and exits |
+| FR-AC-11 | The application MUST use a single-threaded main event loop with offloaded blocking operations | P0 | UI never freezes for > 100 ms |
+
+### Design Rationale
+Portability is a core differentiator. Storing all data relative to the executable enables USB-stick deployment and avoids polluting the host system. The RAM and CPU targets ensure the overlay is unobtrusive alongside resource-heavy applications like IDEs and browsers.
+
+---
+
+## 7.2 Module 2: Embedded Browser
+
+### Purpose
+Provide a full-featured Chromium-based browser within the application, enabling users to access any web-based tool without an external browser.
+
+| Req ID | Requirement | Priority | Acceptance Criteria |
+|---|---|---|---|
+| FR-BR-01 | The browser MUST be based on Chromium (via Qt WebEngine or CEF) | P0 | User-agent string identifies as a modern Chrome version |
+| FR-BR-02 | The browser MUST support multi-tab browsing with a tab bar | P0 | Users can open, close, and switch tabs; tab bar scrolls for overflow |
+| FR-BR-03 | The browser MUST display an address bar with URL editing and Enter-to-navigate | P0 | URLs load correctly; HTTPS indicator shown |
+| FR-BR-04 | The browser MUST provide Back, Forward, Refresh, and Stop buttons | P0 | Standard navigation behavior |
+| FR-BR-05 | The browser MUST support opening a new tab via button and Ctrl+T | P0 | New tab opens with a configurable home page or blank page |
+| FR-BR-06 | The browser MUST support closing a tab via button and Ctrl+W | P0 | Closing last tab does not close the application; shows new tab page |
+| FR-BR-07 | The browser MUST persist cookies, local storage, IndexedDB, and session storage across application restarts | P0 | User remains logged into ChatGPT, Google, etc. after restart |
+| FR-BR-08 | The browser MUST support file downloads with a configurable download directory | P1 | Download progress shown; completed files accessible from the downloads panel |
+| FR-BR-09 | The browser MUST support file uploads via `<input type="file">` and drag-and-drop | P1 | Users can upload files to Google Docs, ChatGPT, etc. |
+| FR-BR-10 | The browser MUST render PDFs inline | P1 | PDF viewer with zoom, page navigation, and scroll |
+| FR-BR-11 | The browser MUST support bookmarks (add, remove, rename, organize in folders) | P1 | Bookmarks persist across sessions; accessible from a bookmarks panel |
+| FR-BR-12 | The browser MUST support Find-in-Page (Ctrl+F) | P1 | Highlights matches; navigates between them |
+| FR-BR-13 | The browser MUST support zoom per tab (Ctrl+Plus, Ctrl+Minus, Ctrl+0) | P1 | Zoom level persists per tab within the session |
+| FR-BR-14 | The browser MUST load the following sites without functional regressions: ChatGPT, Claude, Gemini, Google Docs, Google Sheets, Notion, GitHub, StackOverflow | P0 | Manual QA pass for each site; login, navigation, and core features work |
+| FR-BR-15 | The browser MUST support JavaScript ES2020+ | P0 | Modern web applications function correctly |
+| FR-BR-16 | The browser MUST support WebSocket connections (required by ChatGPT, Claude) | P0 | Real-time responses stream correctly |
+| FR-BR-17 | The browser MUST isolate browser profile data within the portable `data/` directory | P0 | No data written to the user's default Chrome/Edge profile |
+| FR-BR-18 | The browser MUST support a "Copy Selected Text to Smart Clipboard" context menu action | P0 | Right-click → "Copy to Smart Clipboard" adds selection to the clipboard panel |
+| FR-BR-19 | The browser MUST support DevTools (toggleable, off by default) for debugging | P2 | F12 or menu toggle opens DevTools |
+
+### Design Rationale
+Qt WebEngine (Chromium-based) is recommended over CEF because it integrates natively with the PySide6 widget tree, reducing interop complexity. Session persistence is critical — users will not tolerate re-logging into ChatGPT every launch. WebSocket support is non-negotiable for streaming AI responses.
+
+### Verified Site Compatibility Matrix
+
+| Site | Login | Core Features | WebSocket | Upload | Download | Notes |
+|---|---|---|---|---|---|---|
+| ChatGPT | Required | Chat, history, plugins | Yes | Yes (files) | Yes (exports) | Must support streaming responses |
+| Claude | Required | Chat, artifacts | Yes | Yes (files) | Yes (artifacts) | Must support artifact rendering |
+| Gemini | Required | Chat, canvas | Yes | Yes (images) | No | Google OAuth flow must work |
+| Google Docs | Required | Edit, comment, share | Yes | N/A | Yes (export) | Complex DOM; test formatting preservation |
+| Google Sheets | Required | Edit, formulas, charts | Yes | N/A | Yes (export) | Heavy JS; monitor performance |
+| Notion | Required | Pages, databases, blocks | Yes | Yes (files) | Yes (export) | Complex SPA; test navigation |
+| GitHub | Required | Repos, issues, PRs | No | Yes (files) | Yes (archives) | Standard web app |
+| StackOverflow | Optional | Browse, search, answers | No | No | No | Read-mostly; lightweight |
+
+---
+
+## 7.3 Module 3: Workspace Management
+
+### Purpose
+Isolate user contexts so that different projects, workshops, classes, or clients do not interfere with each other.
+
+| Req ID | Requirement | Priority | Acceptance Criteria |
+|---|---|---|---|
+| FR-WS-01 | The application MUST support creating named workspaces | P0 | User provides a name; workspace is created with default settings |
+| FR-WS-02 | Each workspace MUST independently store: browser tabs (URLs + history), clipboard entries, typing settings, window geometry (size, position, opacity), and user preferences | P0 | Switching workspaces restores all saved state |
+| FR-WS-03 | The application MUST support switching between workspaces in < 1 second | P0 | Measured from click to interactive UI in the target workspace |
+| FR-WS-04 | The application MUST support duplicating a workspace (deep copy) | P1 | All state including clipboard entries is copied; new workspace has a unique name |
+| FR-WS-05 | The application MUST support renaming a workspace | P0 | Name updates in the UI and on disk |
+| FR-WS-06 | The application MUST support deleting a workspace with confirmation | P0 | Confirmation dialog; data is permanently removed |
+| FR-WS-07 | The application MUST support exporting a workspace to a `.bmw` archive file | P2 | Archive contains all workspace data in a portable format |
+| FR-WS-08 | The application MUST support importing a workspace from a `.bmw` file | P2 | Validates archive integrity before import; reports errors |
+| FR-WS-09 | The application MUST persist at least one "Default" workspace that cannot be deleted | P0 | Delete action is disabled for the Default workspace |
+| FR-WS-10 | The application MUST display the active workspace name in the title bar and status bar | P0 | Name is always visible |
+
+### Workspace Data Model
+
+```
+workspace/
+├── meta.json              # name, created_at, updated_at, settings
+├── browser/
+│   ├── profile/           # Chromium profile (cookies, storage, cache)
+│   └── session.json       # open tabs, tab order, active tab, per-tab zoom
+├── clipboard/
+│   └── entries.db         # SQLite database of clipboard entries
+├── typing/
+│   └── settings.json      # speed, queue, preferences
+└── window/
+    └── geometry.json       # x, y, width, height, opacity, collapsed, pinned
+```
+
+### Design Rationale
+Workspaces are the organizational backbone. Deep isolation (including separate Chromium profiles) ensures that a teacher's classroom workspace doesn't leak cookies into their personal workspace. The `.bmw` export format enables sharing curated setups between colleagues.
+
+> [!NOTE]
+> Separate Chromium profiles per workspace will increase disk usage. Each profile starts at ~20 MB and grows with cache. A "Shared Browser Profile" option may be offered in settings as a space-saving alternative (deferred to v1.1).
+
+---
+
+## 7.4 Module 4: Smart Clipboard
+
+### Purpose
+Provide a persistent, searchable, categorizable clipboard that accumulates text across browser sessions and workspaces.
+
+| Req ID | Requirement | Priority | Acceptance Criteria |
+|---|---|---|---|
+| FR-CB-01 | The clipboard MUST capture text selected in the embedded browser via context menu or Ctrl+Shift+C | P0 | Selected text appears in the clipboard panel within 200 ms |
+| FR-CB-02 | The clipboard MUST maintain a history of all copied entries within the workspace | P0 | Entries persist across application restarts |
+| FR-CB-03 | The clipboard MUST support full-text search across all entries | P0 | Search returns results within 200 ms for ≤10,000 entries |
+| FR-CB-04 | The clipboard MUST support pinning entries to the top of the list | P0 | Pinned entries remain at top regardless of sort order |
+| FR-CB-05 | The clipboard MUST support deleting individual entries and bulk deletion | P0 | Delete with 30-second undo window |
+| FR-CB-06 | The clipboard MUST support user-defined categories (tags) | P1 | Users create, rename, delete categories; entries can have multiple categories |
+| FR-CB-07 | The clipboard MUST support free-text notes per entry | P1 | Notes are editable inline; searchable |
+| FR-CB-08 | The clipboard MUST display a timestamp for each entry | P0 | Timestamp shown in relative format ("2 min ago") with absolute on hover |
+| FR-CB-09 | The clipboard MUST support sorting by: recency, alphabetical, category, pinned-first | P1 | Sort option persists in workspace settings |
+| FR-CB-10 | The clipboard MUST support a "Type This" action that sends the entry to the Typing Engine | P0 | One-click initiates typing; entry is queued if typing is in progress |
+| FR-CB-11 | The clipboard MUST store entry source URL (the browser URL at the time of copy) | P1 | Source URL displayed per entry; clickable to open in browser |
+| FR-CB-12 | The clipboard MUST NOT have a hard limit on entry count; soft limit configurable (default 10,000) | P1 | Oldest unpinned entries auto-archived beyond soft limit |
+| FR-CB-13 | The clipboard MUST support exporting entries to plain text, CSV, or JSON | P2 | Export dialog with format selection |
+
+### Entry Data Model
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | UUID | Unique identifier |
+| `text` | TEXT | The copied content |
+| `source_url` | TEXT | URL at time of copy (nullable) |
+| `source_title` | TEXT | Page title at time of copy (nullable) |
+| `categories` | TEXT[] | User-defined tags |
+| `note` | TEXT | User annotation (nullable) |
+| `is_pinned` | BOOL | Pin status |
+| `created_at` | DATETIME | Copy timestamp |
+| `updated_at` | DATETIME | Last modification timestamp |
+| `char_count` | INT | Character count for typing ETA |
+
+### Design Rationale
+The smart clipboard is the bridge between the browser and the typing engine. Unlike the system clipboard (which holds one item), this is a persistent knowledge base. Full-text search via SQLite FTS5 ensures sub-200ms results even at scale. Categories and notes transform it from a simple history into an organizational tool.
+
+---
+
+## 7.5 Module 5: Character-by-Character Typing Engine
+
+### Purpose
+Simulate human-like keyboard input into a target application window, replacing the disruptive instant-paste workflow.
+
+| Req ID | Requirement | Priority | Acceptance Criteria |
+|---|---|---|---|
+| FR-TY-01 | The typing engine MUST send individual keystrokes to the currently focused window using the Windows `SendInput` API | P0 | Characters appear one at a time in the target application |
+| FR-TY-02 | The typing engine MUST support 10 speed levels | P0 | See speed calibration table below |
+| FR-TY-03 | The typing engine MUST support pausing in-progress typing | P0 | Pause freezes at the current character; no characters are dropped |
+| FR-TY-04 | The typing engine MUST support resuming paused typing | P0 | Resume continues from the exact paused position |
+| FR-TY-05 | The typing engine MUST support cancelling in-progress typing | P0 | Cancel stops immediately; remaining text is not typed; queue is preserved |
+| FR-TY-06 | The typing engine MUST support a queue of snippets to type sequentially | P1 | Queue panel shows order, snippet preview, and estimated time |
+| FR-TY-07 | The typing engine MUST display a progress indicator (percentage complete) | P1 | Progress bar updates in real time |
+| FR-TY-08 | The typing engine MUST display an estimated time remaining | P1 | ETA recalculated based on current speed |
+| FR-TY-09 | The typing engine MUST support full Unicode, including multi-byte characters, emoji, CJK, RTL, and diacritics | P0 | All code points type correctly; verified with Arabic, Chinese, Japanese, Korean, and emoji test sets |
+| FR-TY-10 | The typing engine MUST add human-like timing variance (±15% random jitter per keystroke) to avoid perfectly uniform intervals | P1 | Timing analysis of 1,000 keystrokes shows non-uniform distribution |
+| FR-TY-11 | The typing engine MUST NOT interfere with the user's ability to use the keyboard during typing (user input takes priority) | P0 | If user presses a key during typing, the typed key is not swallowed |
+| FR-TY-12 | The typing engine MUST handle newlines correctly (Enter key simulation) | P0 | Multi-line text types with correct line breaks |
+| FR-TY-13 | The typing engine MUST handle tab characters (Tab key simulation) | P1 | Tabs type correctly in code editors |
+| FR-TY-14 | The typing engine MUST provide a configurable delay before starting (default: 3 seconds) to allow user to focus the target window | P0 | Countdown displayed in the UI; user can adjust 1–10 seconds |
+
+### Speed Calibration Table
+
+| Level | Characters Per Minute | Delay Between Chars (ms) | Use Case |
+|---|---|---|---|
+| 1 | ~30 | ~2000 | Dramatic effect, accessibility |
+| 2 | ~60 | ~1000 | Slow explanation |
+| 3 | ~100 | ~600 | Deliberate typing |
+| 4 | ~150 | ~400 | Normal human typing |
+| 5 | ~200 | ~300 | Fast human typing |
+| 6 | ~300 | ~200 | Efficient transfer |
+| 7 | ~450 | ~133 | Quick transfer |
+| 8 | ~600 | ~100 | Rapid transfer |
+| 9 | ~800 | ~75 | Very fast transfer |
+| 10 | ~1000 | ~60 | Maximum speed |
+
+> [!NOTE]
+> The ±15% jitter (FR-TY-10) applies on top of the base delay. For example, at speed 4 (400 ms base), actual delays will range from 340–460 ms per character.
+
+### Implementation Guidance
+
+The engine MUST use the Windows `SendInput` API (via `ctypes` or `pywin32`) and NOT deprecated methods like `keybd_event` or `SendKeys`. `SendInput` is the modern, supported API for synthesizing keyboard input and does not require elevated privileges.
+
+For Unicode characters outside the basic ASCII range, the engine MUST use `KEYEVENTF_UNICODE` flag with `SendInput` to send the character directly without requiring a virtual key code mapping.
+
+The typing engine runs on a **dedicated background thread** with a cancellation event. The main UI thread communicates via signals/slots (Qt) to update progress and handle pause/resume/cancel commands.
+
+### Design Rationale
+Character-by-character typing is the core value proposition. `SendInput` is the correct API — it is standard, documented, works without admin privileges, and is the same API used by Windows on-screen keyboard and accessibility tools. The jitter feature prevents robotic uniformity, which is important for presentation authenticity.
+
+---
+
+## 7.6 Module 6: Global Hotkeys
+
+### Purpose
+Allow users to control typing and clipboard operations without switching focus away from the target application.
+
+| Req ID | Requirement | Priority | Acceptance Criteria |
+|---|---|---|---|
+| FR-HK-01 | The application MUST register system-wide hotkeys that work when the application is not focused | P0 | Hotkeys trigger the correct action from any foreground application |
+| FR-HK-02 | Default hotkeys MUST be provided (see table below) | P0 | Defaults are active on first launch |
+| FR-HK-03 | All hotkeys MUST be user-configurable via the Settings panel | P0 | User can change any hotkey; changes take effect immediately |
+| FR-HK-04 | The application MUST detect and warn about hotkey conflicts with other applications | P1 | If registration fails, user is notified and offered alternatives |
+| FR-HK-05 | The application MUST support disabling individual hotkeys | P1 | Disabled hotkeys are not registered with the OS |
+| FR-HK-06 | The application MUST support a "master disable" toggle for all hotkeys | P1 | One toggle disables all hotkeys; re-enable restores previous configuration |
+
+### Default Hotkey Map
+
+| Action | Default Hotkey | Configurable |
+|---|---|---|
+| Copy selection to Smart Clipboard | `Ctrl+Shift+C` | Yes |
+| Start typing selected clipboard entry | `Ctrl+Shift+T` | Yes |
+| Pause/Resume typing | `Ctrl+Shift+P` | Yes |
+| Stop (cancel) typing | `Ctrl+Shift+S` | Yes |
+| Show/Hide batmanoverlay window | `Ctrl+Shift+B` | Yes |
+| Toggle always-on-top | `Ctrl+Shift+A` | Yes |
+| Open Global Search | `Ctrl+Shift+F` | Yes |
+| Quick switch workspace | `Ctrl+Shift+W` | Yes |
+
+### Implementation Guidance
+
+Use the Windows `RegisterHotKey` API via `ctypes` or `pywin32`. Each hotkey is registered with the application's hidden message window. When a `WM_HOTKEY` message is received, emit a Qt signal to the appropriate handler.
+
+**Conflict resolution:** If `RegisterHotKey` returns `False` (conflict), display a non-blocking notification: *"Hotkey Ctrl+Shift+T is in use by another application. Please choose a different combination."*
+
+### Design Rationale
+Global hotkeys are essential because the user's focus will be on the target application (e.g., VS Code, a terminal, a web form) while batmanoverlay operates in the background. Without global hotkeys, the user would need to click on batmanoverlay to pause/resume typing, which would shift focus and disrupt the workflow.
+
+---
+
+## 7.7 Module 7: Floating Window
+
+### Purpose
+Provide a non-intrusive, always-on-top overlay window that users can position, resize, and make semi-transparent.
+
+| Req ID | Requirement | Priority | Acceptance Criteria |
+|---|---|---|---|
+| FR-FW-01 | The window MUST support always-on-top mode (default: enabled) | P0 | Window remains above all other windows; toggleable |
+| FR-FW-02 | The window MUST be freely resizable (minimum: 400×300 px; maximum: screen resolution) | P0 | Drag handles on all edges and corners |
+| FR-FW-03 | The window MUST be freely draggable via the title bar | P0 | Standard Windows drag behavior |
+| FR-FW-04 | The window MUST remember its position, size, and opacity per workspace | P0 | Geometry restored on workspace switch and application restart |
+| FR-FW-05 | The window MUST support an opacity slider from 10% to 100% in 1% increments | P0 | Slider in the title bar or settings; real-time preview |
+| FR-FW-06 | The window MUST support a "pin" mode that locks position and size | P1 | Pin icon in title bar; when pinned, drag and resize are disabled |
+| FR-FW-07 | The window MUST support "collapse" mode that reduces to a compact bar (title + controls only) | P1 | Collapse button in title bar; expands back to previous size |
+| FR-FW-08 | The window MUST NOT intercept mouse clicks when at low opacity, UNLESS the user explicitly clicks on the window area | P0 | Click-through is NOT enabled (see Design Rationale) |
+| FR-FW-09 | The window MUST support multiple monitor setups | P0 | Window can be positioned on any monitor; position saved per monitor configuration |
+| FR-FW-10 | The window MUST clamp to screen bounds to prevent positioning off-screen | P1 | If monitor is disconnected, window repositions to primary monitor |
+
+### Design Rationale
+Click-through (FR-FW-08) is intentionally NOT implemented. Click-through windows are associated with stealth overlays. batmanoverlay is always interactive — when you click it, you interact with it. This is consistent with the transparency principle.
+
+The opacity range starts at 10% (not 0%) to ensure the window is always visible, reinforcing that it is never hidden.
+
+---
+
+## 7.8 Module 8: Settings
+
+### Purpose
+Provide a centralized configuration interface for all application preferences.
+
+| Req ID | Requirement | Priority | Acceptance Criteria |
+|---|---|---|---|
+| FR-ST-01 | The Settings panel MUST be organized into the following sections: General, Typing, Appearance, Hotkeys, Browser, Downloads, Workspace, Clipboard, Accessibility, About | P0 | All sections accessible from a sidebar or tab navigation |
+| FR-ST-02 | All settings MUST be saved immediately on change (no explicit "Save" button required) | P0 | Changes persist across restarts |
+| FR-ST-03 | The Settings panel MUST support a "Reset to Defaults" option per section and globally | P1 | Confirmation dialog before reset |
+| FR-ST-04 | The Settings panel MUST validate inputs (e.g., hotkey conflicts, numeric ranges) | P0 | Invalid inputs show inline error messages |
+
+### Settings Breakdown
+
+#### General
+- Language (English only in v1; i18n-ready architecture)
+- Check for updates on startup (default: enabled)
+- Start with last session or clean start
+- Default workspace
+
+#### Typing
+- Default speed level (1–10, default: 5)
+- Default pre-typing delay (1–10 seconds, default: 3)
+- Enable timing jitter (default: on)
+- Jitter range (5%–25%, default: 15%)
+
+#### Appearance
+- Theme: Dark / Light / System (default: System)
+- Accent color
+- Font family (select from installed fonts)
+- Font size scale (80%–200%, default: 100%)
+- Default window opacity (default: 100%)
+
+#### Hotkeys
+- Full hotkey configuration table (see §7.6)
+- Enable/disable individual hotkeys
+- Master enable/disable
+
+#### Browser
+- Home page URL (default: about:blank)
+- User agent override (optional)
+- Enable JavaScript (default: on)
+- Enable cookies (default: on)
+- Clear browser data (cache, cookies, history)
+- Proxy configuration (system/manual/none)
+
+#### Downloads
+- Default download directory
+- Ask before download (default: on)
+- Show download notifications (default: on)
+
+#### Workspace
+- Default workspace name
+- Auto-save interval (30–300 seconds, default: 60)
+
+#### Clipboard
+- Maximum entries (100–unlimited, default: 10,000)
+- Auto-archive old entries (default: on)
+- Default sort order
+
+#### Accessibility
+- Enable screen reader support (default: auto-detect)
+- High contrast mode (default: off)
+- Reduce animations (default: off)
+- Focus indicators (default: on)
+
+#### About
+- Version information
+- Licenses
+- Acknowledgments
+- System information (OS, architecture, Qt version, Chromium version)
+
+---
+
+## 7.9 Module 9: Global Search
+
+### Purpose
+Provide a unified search interface across all application data.
+
+| Req ID | Requirement | Priority | Acceptance Criteria |
+|---|---|---|---|
+| FR-GS-01 | The search MUST index: clipboard entries, bookmarks, browser tab titles, browser history, workspace names | P0 | All data types appear in results |
+| FR-GS-02 | The search MUST return results within 300 ms | P0 | Measured with 10,000 clipboard entries and 1,000 history entries |
+| FR-GS-03 | The search MUST display results grouped by type with icons | P1 | Groups: Clipboard, Bookmarks, Tabs, History, Workspaces |
+| FR-GS-04 | The search MUST support keyboard navigation (arrow keys to navigate, Enter to select) | P0 | Full keyboard operation without mouse |
+| FR-GS-05 | The search MUST open via hotkey (default: Ctrl+Shift+F) and via UI button | P0 | Opens as a modal overlay; Escape closes |
+
+### Design Rationale
+A global search is the power user's primary navigation tool. Inspired by the command palette in VS Code, Spotlight on macOS, and the search bar in Linear. Grouping by type helps users mentally filter results.
+
+---
+
+## 7.10 Module 10: Session Management
+
+### Purpose
+Protect user work from loss due to crashes, unexpected shutdowns, or accidental closure.
+
+| Req ID | Requirement | Priority | Acceptance Criteria |
+|---|---|---|---|
+| FR-SM-01 | The application MUST auto-save the current session at a configurable interval (default: 60 s) | P0 | Session file updated on disk every interval |
+| FR-SM-02 | The application MUST save the session on graceful exit (window close, system shutdown) | P0 | Session file is up-to-date when process terminates normally |
+| FR-SM-03 | The application MUST detect an ungraceful shutdown (crash) and offer session recovery on next launch | P0 | "Restore previous session?" dialog on launch if crash detected |
+| FR-SM-04 | The session MUST include: workspace states, window geometry, active workspace, typing queue state | P0 | All state is restored on recovery |
+| FR-SM-05 | The application MUST support manual session backup (export to file) | P2 | Full session export in a versioned archive format |
+| FR-SM-06 | The application MUST support session import from a backup file | P2 | Validates integrity; warns about version mismatch |
+
+### Crash Detection Strategy
+Use a PID lock file (`data/session.lock`). On startup:
+1. Check if `session.lock` exists.
+2. If it exists, check if the PID in the file is still running.
+3. If the PID is not running → previous instance crashed → offer recovery.
+4. If the PID is running → another instance is active → warn user.
+5. Write current PID to `session.lock`.
+6. Delete `session.lock` on graceful exit.
+
+---
+
+## 7.11 Module 11: Logging
+
+### Purpose
+Provide structured, leveled logging for diagnostics, debugging, and performance monitoring.
+
+| Req ID | Requirement | Priority | Acceptance Criteria |
+|---|---|---|---|
+| FR-LG-01 | The application MUST log to rotating files in `data/logs/` | P0 | Log files rotate at 10 MB; retain last 5 files |
+| FR-LG-02 | Log levels: TRACE, DEBUG, INFO, WARNING, ERROR, CRITICAL | P0 | Default level: INFO; configurable |
+| FR-LG-03 | Each log entry MUST include: timestamp (ISO 8601), level, module, message, and optional context | P0 | Structured format parseable by log tools |
+| FR-LG-04 | The application MUST log: startup, shutdown, workspace switches, typing actions (start/pause/resume/cancel), errors, and performance metrics | P0 | All events present in logs at appropriate levels |
+| FR-LG-05 | The application MUST NOT log clipboard content or user-entered text | P0 | Privacy protection; logs contain only metadata |
+| FR-LG-06 | The application MUST NOT log passwords, tokens, or cookies | P0 | Security requirement |
+| FR-LG-07 | The application MUST provide a "View Logs" option in Settings for user self-service debugging | P2 | Opens log file in the system text editor |
+
+### Log Format
+```
+2026-08-07T14:23:01.456+0000 | INFO | browser.tab | Tab opened | {"url": "https://chat.openai.com", "tab_id": 3}
+```
+
+### Design Rationale
+Loguru is recommended for its simplicity, structured output, and rotation support. The explicit prohibition on logging content (FR-LG-05, FR-LG-06) protects user privacy and prevents sensitive data from appearing in diagnostic files that might be shared for support.
+
+---
+
+## 7.12 Module 12: Accessibility
+
+### Purpose
+Ensure the application is usable by people with disabilities, following WCAG 2.1 AA guidelines adapted for desktop applications.
+
+| Req ID | Requirement | Priority | Acceptance Criteria |
+|---|---|---|---|
+| FR-AX-01 | All interactive elements MUST be keyboard-accessible via Tab navigation | P0 | Full workflow (browse, copy, type) achievable without mouse |
+| FR-AX-02 | All interactive elements MUST have visible focus indicators | P0 | 2px solid focus ring; high-contrast in both themes |
+| FR-AX-03 | All interactive elements MUST expose accessible names and roles to screen readers (via Qt Accessibility API) | P0 | NVDA and JAWS can read all controls |
+| FR-AX-04 | The application MUST support a High Contrast mode | P1 | Follows Windows High Contrast theme settings |
+| FR-AX-05 | The application MUST support UI scaling from 80% to 200% | P1 | All text and controls scale proportionally |
+| FR-AX-06 | The application MUST support system DPI scaling (100%, 125%, 150%, 175%, 200%) | P0 | No clipping, overlap, or blurriness at any DPI |
+| FR-AX-07 | Animations MUST be disableable (prefers-reduced-motion or settings toggle) | P1 | All animations freeze or are replaced with instant transitions |
+| FR-AX-08 | Color MUST NOT be the sole means of conveying information | P0 | Icons and text accompany all color indicators |
+| FR-AX-09 | Minimum text contrast ratio: 4.5:1 (AA standard) | P0 | Verified with contrast checker tool for both themes |
+
+---
+
+## 7.13 Module 13: Performance
+
+### Purpose
+Define performance budgets and optimization strategies.
+
+| Req ID | Requirement | Priority | Acceptance Criteria |
+|---|---|---|---|
+| FR-PF-01 | Cold startup to interactive UI MUST be < 5 s | P0 | Measured on i5-8250U, 8 GB RAM, SSD |
+| FR-PF-02 | Warm startup (from tray restore) MUST be < 500 ms | P0 | Window visible and interactive |
+| FR-PF-03 | Idle RAM (0 tabs) MUST be < 200 MB | P0 | Measured after 60 s idle |
+| FR-PF-04 | Idle CPU (0 tabs) MUST be < 2% | P0 | Measured over 60 s average |
+| FR-PF-05 | Each additional browser tab adds < 100 MB RAM (average) | P1 | Measured with standard web pages |
+| FR-PF-06 | Clipboard search MUST return results in < 200 ms for ≤10,000 entries | P0 | Measured on reference hardware |
+| FR-PF-07 | Global search MUST return results in < 300 ms | P0 | Across all indexed data |
+| FR-PF-08 | Workspace switch MUST complete in < 1 s | P0 | All UI updated and interactive |
+| FR-PF-09 | Typing engine thread MUST NOT block the UI thread | P0 | UI responds during active typing |
+| FR-PF-10 | Browser tabs MUST support lazy loading (don't reload until focused) | P1 | Restored tabs show placeholder until selected |
+
+### Optimization Strategies
+
+| Strategy | Target | Implementation |
+|---|---|---|
+| Lazy tab loading | Startup time, RAM | Restore tab metadata only; load content on focus |
+| SQLite WAL mode | Clipboard write performance | Enable Write-Ahead Logging for concurrent reads/writes |
+| FTS5 virtual table | Search speed | Full-text search index for clipboard entries |
+| Thread pooling | CPU utilization | QThreadPool for background operations |
+| Image caching | Browser rendering | Chromium disk cache bounded at 200 MB |
+| Deferred initialization | Startup time | Initialize non-critical modules after UI is visible |
+| Object pooling | Memory allocation | Reuse clipboard entry widgets in the list view |
+
+---
+
+## 7.14 Module 14: Error Handling
+
+### Purpose
+Define error categories, user-facing messages, and recovery strategies.
+
+| Error Category | Examples | User Impact | Recovery Strategy |
+|---|---|---|---|
+| **Network Failure** | DNS resolution failure, timeout, SSL error | Browser pages don't load | Show browser-native error page; retry button; offline indicator in status bar |
+| **Browser Crash** | Tab crash, renderer process OOM | Tab content lost | Detect via `QWebEnginePage.renderProcessTerminated`; offer tab reload; log crash |
+| **Typing Interruption** | Target window closed, focus lost, user locked screen | Typing paused mid-word | Auto-pause when target window is gone; notify user; resume when target returns |
+| **Clipboard Error** | SQLite write failure, disk full | Entry not saved | Retry 3x; notify user; queue in memory until disk available |
+| **Session Corruption** | Malformed JSON, incomplete write | Session not restorable | Fall back to last known good session; create backup of corrupted file for diagnostics |
+| **Configuration Error** | Invalid settings value, schema migration failure | Settings reset | Validate on load; fall back to defaults for invalid values; warn user |
+| **Hotkey Conflict** | Another app holds the hotkey | Hotkey doesn't work | Non-blocking notification; suggest alternative key combination |
+| **Disk Space** | < 50 MB free on data drive | Data not saved | Warning notification; disable auto-save until space is freed |
+| **Unexpected Shutdown** | Power loss, BSOD, force kill | All in-memory state lost | PID lock file detection on restart; offer session recovery |
+
+### Error Display Philosophy
+
+| Severity | Display Method | User Action Required |
+|---|---|---|
+| Info | Status bar message (fades after 5 s) | None |
+| Warning | Non-blocking toast notification | Optional |
+| Error | Modal dialog with explanation and action buttons | Yes |
+| Critical | Modal dialog; application may need restart | Yes |
+
+### Design Rationale
+Users should never see raw exceptions, stack traces, or technical jargon. Every error message follows the pattern: *"What happened"* → *"Why it matters"* → *"What you can do."*
+
+---
+
+## 7.15 Module 15: Testing
+
+Covered in detail in §20 (Testing Strategy).
+
+---
+
+# 8. Non-Functional Requirements
+
+| ID | Category | Requirement | Metric |
+|---|---|---|---|
+| NFR-01 | **Responsiveness** | UI interactions complete within 100 ms (clicks, hovers, panel switches) | Measured via profiling |
+| NFR-02 | **Reliability** | Application MTBF ≥ 72 hours of continuous use | No crashes in 72-hour soak test |
+| NFR-03 | **Maintainability** | Codebase follows PEP 8, type-annotated, ≥80% test coverage | CI enforcement |
+| NFR-04 | **Scalability** | Supports ≤ 20 workspaces, ≤ 10,000 clipboard entries per workspace, ≤ 50 tabs total | No degradation within limits |
+| NFR-05 | **Extensibility** | Modular architecture with dependency injection; plugin API surface documented | Module addition requires no core changes |
+| NFR-06 | **Security** | See §15; no privilege escalation, injection, or stealth capabilities | Security audit pass |
+| NFR-07 | **Accessibility** | WCAG 2.1 AA compliance for desktop; screen reader tested with NVDA | Accessibility audit pass |
+| NFR-08 | **Performance** | See §16; all performance budgets met | Automated performance tests in CI |
+| NFR-09 | **Compatibility** | Windows 10 1809+, Windows 11; x86_64 architecture | Manual test matrix |
+| NFR-10 | **UX Quality** | Professional, modern desktop UI; no placeholder graphics; consistent design language | Design review sign-off |
+| NFR-11 | **Data Integrity** | No data loss on graceful shutdown; ≤ 60 s data loss on crash | Session recovery test |
+| NFR-12 | **Portability** | Entire application runs from a single folder; no system writes (except OS-mandated Chromium temp) | Clean-machine test |
+
+---
+
+# 9. UX Specification
+
+## 9.1 Design Principles
+
+1. **Non-intrusive by default.** The application should feel like a helpful assistant, not a competing window. Default opacity, compact mode, and tasteful animations reinforce this.
+2. **Progressive disclosure.** New users see a clean interface. Power features (workspaces, categories, hotkey config) are accessible but not in your face.
+3. **Immediate feedback.** Every user action (click, hotkey, typing start) produces visual or audible feedback within 100 ms.
+4. **Consistency.** Use the same interaction patterns throughout: sidebars slide, dialogs center, toasts appear bottom-right.
+5. **Forgiveness.** Undo for destructive actions (30 s). Confirmation for irreversible ones (delete workspace).
+
+## 9.2 Navigation Model
+
+The application uses a **sidebar + content panel** layout, similar to VS Code, Figma, and Linear.
+
+```
+┌──────────────────────────────────────────────────────────┐
+│  Title Bar  [Workspace: Workshop A]  [─] [□] [×]  [📌]  │
+├────────┬─────────────────────────────────────────────────┤
+│        │  Tab Bar  [ChatGPT] [Claude] [Docs]  [+]       │
+│  Side  │─────────────────────────────────────────────────│
+│  bar   │  ┌──────────────────────────────────────────┐   │
+│        │  │                                          │   │
+│  🌐    │  │                                          │   │
+│  📋    │  │           Browser Content Area            │   │
+│  ⌨️    │  │                                          │   │
+│  🔖    │  │                                          │   │
+│  ⚙️    │  │                                          │   │
+│        │  └──────────────────────────────────────────┘   │
+├────────┴─────────────────────────────────────────────────┤
+│  Status Bar  [Workspace] [Typing: Idle] [Opacity: 80%]  │
+└──────────────────────────────────────────────────────────┘
+```
+
+### Sidebar Icons (Top to Bottom)
+
+| Icon | Panel | Description |
+|---|---|---|
+| 🌐 | Browser | Shows tab bar + browser content (default view) |
+| 📋 | Clipboard | Shows smart clipboard list with search |
+| ⌨️ | Typing | Shows typing queue, controls, and progress |
+| 🔖 | Bookmarks | Shows bookmark tree |
+| ⚙️ | Settings | Opens settings in the content area |
+
+Clicking a sidebar icon toggles the corresponding panel. Double-clicking collapses the sidebar entirely.
+
+## 9.3 Interaction Flows
+
+### Flow 1: Copy and Type Workflow
+1. User browses to ChatGPT in the embedded browser.
+2. User selects text from a ChatGPT response.
+3. User right-clicks → "Copy to Smart Clipboard" (or presses Ctrl+Shift+C).
+4. Text appears in the Clipboard panel with a green flash animation.
+5. User clicks the sidebar 📋 icon to view the clipboard.
+6. User hovers over the entry → "Type This" button appears.
+7. User clicks "Type This."
+8. A 3-second countdown begins ("Typing starts in 3… 2… 1…").
+9. User clicks on the target application (e.g., VS Code).
+10. Typing begins at the configured speed.
+11. Progress bar updates in the batmanoverlay status bar.
+12. User presses Ctrl+Shift+P to pause; presses again to resume.
+13. Typing completes; status bar shows "Typing complete ✓" for 5 seconds.
+
+### Flow 2: Workspace Switch
+1. User clicks the workspace name in the title bar.
+2. A dropdown shows all workspaces with icons and last-used timestamps.
+3. User selects a different workspace.
+4. The UI transitions (slide animation, 200 ms).
+5. Browser tabs, clipboard, and settings reflect the new workspace.
+
+### Flow 3: Global Search
+1. User presses Ctrl+Shift+F.
+2. A centered modal with a search input appears (Spotlight-style).
+3. User types a query.
+4. Results appear grouped by type (Clipboard, Bookmarks, Tabs, History, Workspaces).
+5. User navigates results with arrow keys; presses Enter.
+6. The relevant panel opens with the selected item highlighted.
+
+## 9.4 Empty States
+
+Every panel has a meaningful empty state — no blank screens.
+
+| Panel | Empty State Message | CTA |
+|---|---|---|
+| Browser (new tab) | "Where would you like to go?" | Address bar focused; quick links to ChatGPT, Claude, Gemini, Google Docs |
+| Clipboard | "Nothing copied yet. Select text in the browser and press Ctrl+Shift+C to save it here." | Icon: empty clipboard illustration |
+| Typing Queue | "No snippets queued. Copy text to the clipboard, then use 'Type This' to start." | Icon: keyboard illustration |
+| Bookmarks | "No bookmarks yet. Click ★ in the address bar to bookmark a page." | Icon: star illustration |
+| Search (no results) | "No results found for '{query}'." | Suggestion: "Try a different search term" |
+
+## 9.5 Loading States
+
+| Context | Loading Indicator |
+|---|---|
+| Browser page loading | Tab spinner + progress bar in address bar |
+| Clipboard search | Skeleton list items (3 pulsing rows) |
+| Workspace switch | Crossfade animation with loading spinner |
+| Application startup | Splash screen with progress bar and module names |
+| Session restore | Progress dialog: "Restoring session… (3/7 tabs loaded)" |
+
+## 9.6 Error States
+
+| Context | Error Display |
+|---|---|
+| Page load failure | In-browser error page: "This page couldn't be loaded. [Retry] [Go Back]" |
+| Clipboard save failure | Toast: "Couldn't save to clipboard. Disk may be full. [Retry]" |
+| Typing failure | Modal: "Typing was interrupted. The target window may have closed. [Retry] [Cancel]" |
+| Hotkey conflict | Toast: "Ctrl+Shift+T is used by another application. [Open Settings]" |
+
+## 9.7 Animation Specification
+
+| Animation | Duration | Easing | Trigger |
+|---|---|---|---|
+| Sidebar panel slide | 200 ms | ease-in-out | Panel switch |
+| Clipboard entry add | 300 ms | ease-out | New entry appears |
+| Toast notification | 300 ms in, 300 ms out | ease-in-out | Notification show/hide |
+| Opacity change | 150 ms | linear | Slider drag |
+| Window collapse/expand | 250 ms | ease-in-out | Collapse button |
+| Tab close | 200 ms | ease-in | Tab close button |
+| Search modal appear | 200 ms | ease-out | Hotkey or button |
+| Typing progress | continuous | linear | Active typing |
+
+---
+
+# 10. UI Specification
+
+## 10.1 Theme System
+
+### Dark Theme (Default)
+
+| Token | Value | Usage |
+|---|---|---|
+| `--bg-primary` | `#1A1B1E` | Main background |
+| `--bg-secondary` | `#25262B` | Sidebar, panels |
+| `--bg-tertiary` | `#2C2E33` | Cards, inputs |
+| `--bg-hover` | `#373A40` | Hover states |
+| `--text-primary` | `#E1E3E8` | Primary text |
+| `--text-secondary` | `#909296` | Secondary text |
+| `--text-muted` | `#5C5F66` | Placeholder text |
+| `--accent` | `#5B8DEF` | Primary actions, links |
+| `--accent-hover` | `#4C7CE0` | Hovered accent |
+| `--success` | `#51CF66` | Success states |
+| `--warning` | `#FCC419` | Warning states |
+| `--error` | `#FF6B6B` | Error states |
+| `--border` | `#373A40` | Borders, dividers |
+| `--shadow` | `rgba(0,0,0,0.3)` | Drop shadows |
+
+### Light Theme
+
+| Token | Value | Usage |
+|---|---|---|
+| `--bg-primary` | `#FFFFFF` | Main background |
+| `--bg-secondary` | `#F8F9FA` | Sidebar, panels |
+| `--bg-tertiary` | `#F1F3F5` | Cards, inputs |
+| `--bg-hover` | `#E9ECEF` | Hover states |
+| `--text-primary` | `#212529` | Primary text |
+| `--text-secondary` | `#868E96` | Secondary text |
+| `--text-muted` | `#ADB5BD` | Placeholder text |
+| `--accent` | `#3B82F6` | Primary actions, links |
+| `--accent-hover` | `#2563EB` | Hovered accent |
+| `--success` | `#22C55E` | Success states |
+| `--warning` | `#EAB308` | Warning states |
+| `--error` | `#EF4444` | Error states |
+| `--border` | `#DEE2E6` | Borders, dividers |
+| `--shadow` | `rgba(0,0,0,0.1)` | Drop shadows |
+
+## 10.2 Typography
+
+| Element | Font | Weight | Size | Line Height |
+|---|---|---|---|---|
+| Title Bar | Inter | 600 (SemiBold) | 13px | 1.2 |
+| Tab Bar | Inter | 500 (Medium) | 12px | 1.2 |
+| Address Bar | Inter Mono | 400 (Regular) | 13px | 1.4 |
+| Panel Header | Inter | 600 (SemiBold) | 14px | 1.3 |
+| Body Text | Inter | 400 (Regular) | 13px | 1.5 |
+| Secondary Text | Inter | 400 (Regular) | 12px | 1.4 |
+| Clipboard Entry | Inter | 400 (Regular) | 13px | 1.4 |
+| Status Bar | Inter | 400 (Regular) | 11px | 1.2 |
+| Button | Inter | 500 (Medium) | 13px | 1.0 |
+| Input | Inter | 400 (Regular) | 13px | 1.4 |
+
+**Font Stack:** `'Inter', -apple-system, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif`
+
+Inter is bundled with the application (self-hosted, no Google Fonts CDN dependency — required for portability).
+
+## 10.3 Component Specifications
+
+### Title Bar
+- Height: 36px
+- Content: Application icon | Workspace selector (dropdown) | Window controls (minimize, maximize/restore, close) | Pin toggle | Opacity slider (compact)
+- Draggable area: entire title bar except controls
+
+### Tab Bar
+- Height: 32px
+- Tab width: 120–240px (flexible)
+- Close button: visible on hover, always visible on active tab
+- Overflow: horizontal scroll with left/right arrows
+- New Tab button: rightmost, fixed position
+- Active tab indicator: 2px accent bottom border
+
+### Address Bar
+- Height: 32px
+- Components: Back | Forward | Refresh/Stop | URL input | Bookmark star | Menu
+- URL input: full width; auto-selects on focus; shows HTTPS lock icon
+- Loading: animated progress bar below address bar
+
+### Sidebar
+- Width: 48px (collapsed, icons only) or 240px (expanded, icons + labels)
+- Toggle: double-click sidebar or drag edge
+- Icons: 24×24px; tooltips on hover in collapsed mode
+- Active indicator: 3px accent left border
+
+### Clipboard Panel
+- Width: adjustable (min 250px, max 50% of window)
+- Header: "Clipboard" + entry count + search input
+- Entry card: text preview (2 lines), timestamp, category badges, pin icon, action buttons on hover
+- Actions per entry: Type This | Copy | Edit Note | Delete
+- Bulk actions: Select All | Delete Selected | Export Selected
+
+### Typing Panel
+- Width: same as clipboard panel
+- Sections:
+  - **Controls:** Speed slider (1–10), Start/Pause/Resume/Cancel buttons
+  - **Progress:** Progress bar, percentage, ETA, characters typed/total
+  - **Queue:** Ordered list of pending snippets; drag to reorder; remove button
+  - **Current:** Preview of currently typing text with cursor position highlighted
+
+### Settings Panel
+- Layout: sidebar navigation (left) + form content (right)
+- Section navigation: vertical list of section names
+- Form elements: toggle switches, sliders, dropdowns, text inputs, hotkey capture inputs
+- Reset button: per section, bottom-right
+
+### Status Bar
+- Height: 24px
+- Segments: Workspace name | Typing status (Idle / Typing: 45% / Paused) | Opacity display | Hotkey status (enabled/disabled) | Notification area
+
+## 10.4 Iconography
+
+Use a consistent icon set. Recommended: **Lucide Icons** (open source, MIT license, 24×24 SVG, consistent stroke width).
+
+Bundle icons as SVG resources within the application.
+
+## 10.5 Responsive Behavior
+
+| Window Width | Behavior |
+|---|---|
+| ≥ 1200px | Full layout: sidebar expanded + content + optional side panel |
+| 800–1199px | Sidebar collapsed (icons only) + content |
+| 400–799px (minimum) | Sidebar hidden; hamburger menu; stacked panels |
+
+---
+
+# 11. Technical Architecture
+
+## 11.1 High-Level Architecture
+
+```
+┌─────────────────────────────────────────────────────┐
+│                    Application Shell                 │
+│  ┌──────────┐  ┌──────────┐  ┌──────────────────┐  │
+│  │   Main   │  │   Qt     │  │    Splash        │  │
+│  │  Window  │  │  Event   │  │    Screen        │  │
+│  │  (UI)    │  │  Loop    │  │                  │  │
+│  └────┬─────┘  └────┬─────┘  └──────────────────┘  │
+│       │              │                               │
+│  ┌────┴──────────────┴────────────────────────────┐  │
+│  │              Core Services Layer                │  │
+│  │  ┌─────────┐ ┌─────────┐ ┌─────────┐          │  │
+│  │  │ Workspace│ │ Session │ │ Config  │          │  │
+│  │  │ Manager │ │ Manager │ │ Manager │          │  │
+│  │  └─────────┘ └─────────┘ └─────────┘          │  │
+│  │  ┌─────────┐ ┌─────────┐ ┌─────────┐          │  │
+│  │  │ Hotkey  │ │ Search  │ │ Logger  │          │  │
+│  │  │ Manager │ │ Engine  │ │         │          │  │
+│  │  └─────────┘ └─────────┘ └─────────┘          │  │
+│  └────────────────────────────────────────────────┘  │
+│       │                                              │
+│  ┌────┴──────────────────────────────────────────┐   │
+│  │             Feature Modules                    │   │
+│  │  ┌──────────┐ ┌──────────┐ ┌──────────────┐   │   │
+│  │  │ Browser  │ │ Clipboard│ │ Typing       │   │   │
+│  │  │ Module   │ │ Module   │ │ Engine       │   │   │
+│  │  └──────────┘ └──────────┘ └──────────────┘   │   │
+│  └───────────────────────────────────────────────┘   │
+│       │                                              │
+│  ┌────┴──────────────────────────────────────────┐   │
+│  │             Data Access Layer                  │   │
+│  │  ┌──────────┐ ┌──────────┐ ┌──────────────┐   │   │
+│  │  │ SQLite   │ │ JSON     │ │ File System  │   │   │
+│  │  │ (FTS5)   │ │ Config   │ │ (Chromium)   │   │   │
+│  │  └──────────┘ └──────────┘ └──────────────┘   │   │
+│  └───────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────┘
+```
+
+## 11.2 Folder Structure
+
+```
+batmanoverlay/
+├── src/
+│   ├── __init__.py
+│   ├── main.py                    # Entry point; argument parsing; app initialization
+│   ├── app.py                     # QApplication subclass; lifecycle management
+│   ├── constants.py               # Application-wide constants
+│   ├── version.py                 # Version string
+│   │
+│   ├── core/                      # Core services (shared across modules)
+│   │   ├── __init__.py
+│   │   ├── config_manager.py      # Configuration load/save/validate
+│   │   ├── session_manager.py     # Auto-save, crash recovery, session I/O
+│   │   ├── workspace_manager.py   # Workspace CRUD, switching, export/import
+│   │   ├── hotkey_manager.py      # Global hotkey registration and dispatch
+│   │   ├── search_engine.py       # Global search across all data sources
+│   │   ├── logger.py              # Logging configuration and setup
+│   │   ├── events.py              # Application-wide event/signal definitions
+│   │   └── exceptions.py          # Custom exception hierarchy
+│   │
+│   ├── browser/                   # Embedded browser module
+│   │   ├── __init__.py
+│   │   ├── browser_widget.py      # QWebEngineView wrapper
+│   │   ├── tab_manager.py         # Tab creation, closure, switching
+│   │   ├── address_bar.py         # URL input with autocomplete
+│   │   ├── bookmark_manager.py    # Bookmark CRUD, storage
+│   │   ├── download_manager.py    # Download handling, progress, notifications
+│   │   ├── browser_profile.py     # Profile isolation per workspace
+│   │   └── context_menu.py        # Custom right-click menu
+│   │
+│   ├── clipboard/                 # Smart clipboard module
+│   │   ├── __init__.py
+│   │   ├── clipboard_manager.py   # Entry CRUD, search, pin, categorize
+│   │   ├── clipboard_widget.py    # Clipboard panel UI
+│   │   ├── entry_model.py         # Pydantic model for clipboard entries
+│   │   └── clipboard_store.py     # SQLite storage with FTS5
+│   │
+│   ├── typing/                    # Character typing engine module
+│   │   ├── __init__.py
+│   │   ├── typing_engine.py       # SendInput-based character typing
+│   │   ├── typing_widget.py       # Typing panel UI (controls, progress, queue)
+│   │   ├── typing_queue.py        # Queue management
+│   │   └── speed_config.py        # Speed level definitions and calibration
+│   │
+│   ├── ui/                        # Shared UI components
+│   │   ├── __init__.py
+│   │   ├── main_window.py         # Main window layout, sidebar, panels
+│   │   ├── title_bar.py           # Custom title bar
+│   │   ├── sidebar.py             # Sidebar with icon navigation
+│   │   ├── status_bar.py          # Status bar
+│   │   ├── splash_screen.py       # Startup splash
+│   │   ├── search_dialog.py       # Global search modal
+│   │   ├── settings_panel.py      # Settings UI
+│   │   ├── workspace_selector.py  # Workspace dropdown
+│   │   ├── toast.py               # Toast notification system
+│   │   ├── dialogs.py             # Confirmation, error, info dialogs
+│   │   ├── themes.py              # Theme definitions and switching
+│   │   └── icons.py               # Icon loading and management
+│   │
+│   ├── models/                    # Data models (Pydantic)
+│   │   ├── __init__.py
+│   │   ├── workspace.py           # Workspace data model
+│   │   ├── session.py             # Session data model
+│   │   ├── settings.py            # Settings data model (with validation)
+│   │   ├── bookmark.py            # Bookmark data model
+│   │   └── typing_job.py          # Typing job data model
+│   │
+│   ├── storage/                   # Data access layer
+│   │   ├── __init__.py
+│   │   ├── database.py            # SQLite connection management, migrations
+│   │   ├── json_store.py          # JSON file read/write with atomic saves
+│   │   └── migrations/            # Schema migration scripts
+│   │       ├── __init__.py
+│   │       └── v001_initial.py
+│   │
+│   └── utils/                     # Utilities
+│       ├── __init__.py
+│       ├── platform.py            # Windows API wrappers (SendInput, RegisterHotKey)
+│       ├── validators.py          # Input validation helpers
+│       ├── file_utils.py          # Atomic file writes, temp file management
+│       └── text_utils.py          # Unicode handling, text processing
+│
+├── resources/                     # Bundled resources
+│   ├── icons/                     # SVG icons (Lucide)
+│   ├── fonts/                     # Bundled Inter font
+│   ├── themes/                    # QSS stylesheets
+│   │   ├── dark.qss
+│   │   └── light.qss
+│   └── images/                    # Splash screen, empty state illustrations
+│
+├── tests/                         # Test suite
+│   ├── __init__.py
+│   ├── conftest.py                # Shared fixtures
+│   ├── unit/                      # Unit tests by module
+│   │   ├── test_clipboard_manager.py
+│   │   ├── test_typing_engine.py
+│   │   ├── test_workspace_manager.py
+│   │   ├── test_config_manager.py
+│   │   ├── test_session_manager.py
+│   │   ├── test_hotkey_manager.py
+│   │   ├── test_search_engine.py
+│   │   └── test_models.py
+│   ├── integration/               # Integration tests
+│   │   ├── test_browser_integration.py
+│   │   ├── test_clipboard_typing_flow.py
+│   │   └── test_workspace_lifecycle.py
+│   ├── ui/                        # UI tests
+│   │   ├── test_main_window.py
+│   │   └── test_settings_panel.py
+│   └── performance/               # Performance benchmarks
+│       ├── test_startup_time.py
+│       ├── test_clipboard_search.py
+│       └── test_memory_usage.py
+│
+├── scripts/                       # Build and utility scripts
+│   ├── build.py                   # PyInstaller build script
+│   ├── lint.py                    # Linting runner
+│   └── release.py                 # Release packaging
+│
+├── data/                          # Runtime data directory (gitignored)
+│   ├── workspaces/
+│   │   └── default/
+│   │       ├── meta.json
+│   │       ├── browser/
+│   │       ├── clipboard/
+│   │       ├── typing/
+│   │       └── window/
+│   ├── config/
+│   │   └── settings.json
+│   ├── logs/
+│   │   └── batmanoverlay.log
+│   ├── sessions/
+│   │   └── session.json
+│   └── session.lock
+│
+├── pyproject.toml                 # Project metadata, dependencies, tool config
+├── requirements.txt               # Pinned dependencies
+├── requirements-dev.txt           # Development dependencies
+├── README.md
+├── LICENSE
+├── CHANGELOG.md
+└── .gitignore
+```
+
+## 11.3 Module Responsibilities
+
+| Module | Responsibility | Dependencies |
+|---|---|---|
+| `main.py` | CLI argument parsing, application launch | `app.py` |
+| `app.py` | QApplication lifecycle, signal wiring, splash screen | All core services |
+| `core/config_manager` | Load, validate, save, and migrate settings | `models/settings`, `storage/json_store` |
+| `core/session_manager` | Auto-save, crash detection, session recovery | `core/workspace_manager`, `storage/json_store` |
+| `core/workspace_manager` | CRUD operations on workspaces, switching, export/import | `storage/database`, `browser/browser_profile` |
+| `core/hotkey_manager` | Register/unregister global hotkeys, dispatch events | `utils/platform`, `core/events` |
+| `core/search_engine` | Index and search across clipboard, bookmarks, history, tabs, workspaces | `clipboard/clipboard_store`, `browser/bookmark_manager` |
+| `core/logger` | Configure Loguru sinks, rotation, and filters | None |
+| `browser/browser_widget` | QWebEngineView instance management | Qt WebEngine |
+| `browser/tab_manager` | Tab lifecycle, tab bar UI, lazy loading | `browser/browser_widget` |
+| `clipboard/clipboard_manager` | Business logic for clipboard operations | `clipboard/clipboard_store`, `models/` |
+| `clipboard/clipboard_store` | SQLite CRUD + FTS5 search | `storage/database` |
+| `typing/typing_engine` | Character-by-character SendInput dispatch on background thread | `utils/platform` |
+| `typing/typing_queue` | Queue management for pending typing jobs | `models/typing_job` |
+| `ui/main_window` | Layout composition, panel switching, window management | All UI modules |
+| `storage/database` | SQLite connection pool, migration runner, WAL mode | SQLite3 (stdlib) |
+
+## 11.4 Dependency Graph
+
+```mermaid
+graph TD
+    MAIN["main.py"] --> APP["app.py"]
+    APP --> MW["ui/main_window"]
+    APP --> SM["core/session_manager"]
+    APP --> CM["core/config_manager"]
+    APP --> LOG["core/logger"]
+    
+    MW --> SIDEBAR["ui/sidebar"]
+    MW --> TITLEBAR["ui/title_bar"]
+    MW --> STATUSBAR["ui/status_bar"]
+    MW --> BW["browser/tab_manager"]
+    MW --> CW["clipboard/clipboard_widget"]
+    MW --> TW["typing/typing_widget"]
+    MW --> SP["ui/settings_panel"]
+    MW --> SD["ui/search_dialog"]
+    
+    BW --> BWG["browser/browser_widget"]
+    BW --> BP["browser/browser_profile"]
+    BW --> AB["browser/address_bar"]
+    BW --> BM["browser/bookmark_manager"]
+    BW --> DM["browser/download_manager"]
+    
+    CW --> CMG["clipboard/clipboard_manager"]
+    CMG --> CS["clipboard/clipboard_store"]
+    CS --> DB["storage/database"]
+    
+    TW --> TE["typing/typing_engine"]
+    TW --> TQ["typing/typing_queue"]
+    TE --> PLAT["utils/platform"]
+    
+    SM --> WM["core/workspace_manager"]
+    WM --> DB
+    WM --> BP
+    
+    APP --> HKM["core/hotkey_manager"]
+    HKM --> PLAT
+    HKM --> EVENTS["core/events"]
+    
+    SD --> SE["core/search_engine"]
+    SE --> CS
+    SE --> BM
+    
+    CM --> JS["storage/json_store"]
+    SM --> JS
+```
+
+## 11.5 Component Communication
+
+All inter-module communication uses **Qt Signals and Slots**. This ensures:
+- Loose coupling (emitter doesn't know about receivers)
+- Thread safety (cross-thread signals are queued automatically by Qt)
+- Testability (signals can be mocked or intercepted)
+
+### Key Signal Definitions (`core/events.py`)
+
+| Signal | Emitter | Payload | Receivers |
+|---|---|---|---|
+| `clipboard_entry_added` | ClipboardManager | `ClipboardEntry` | ClipboardWidget, SearchEngine |
+| `typing_started` | TypingEngine | `TypingJob` | TypingWidget, StatusBar |
+| `typing_progress` | TypingEngine | `(int, int)` chars done/total | TypingWidget, StatusBar |
+| `typing_paused` | TypingEngine | `TypingJob` | TypingWidget, StatusBar |
+| `typing_resumed` | TypingEngine | `TypingJob` | TypingWidget, StatusBar |
+| `typing_cancelled` | TypingEngine | `TypingJob` | TypingWidget, StatusBar |
+| `typing_completed` | TypingEngine | `TypingJob` | TypingWidget, StatusBar |
+| `workspace_switched` | WorkspaceManager | `Workspace` | MainWindow, BrowserModule, ClipboardModule |
+| `hotkey_triggered` | HotkeyManager | `str` action name | Relevant handler |
+| `session_saved` | SessionManager | `None` | StatusBar |
+| `config_changed` | ConfigManager | `(str, Any)` key, value | Dependent modules |
+
+## 11.6 Threading Model
+
+| Thread | Purpose | Communication |
+|---|---|---|
+| **Main (UI) Thread** | Qt event loop, all UI rendering, user input | Direct method calls within thread; signals for cross-thread |
+| **Typing Worker Thread** | SendInput execution, timing control | `QThread` with signals for progress/completion |
+| **Session Auto-Save Thread** | Periodic session serialization | `QTimer` on main thread triggers save on `QThreadPool` |
+| **Browser Renderer Threads** | Chromium renderer processes (managed by Qt WebEngine) | Qt WebEngine API (process isolation is internal) |
+
+> [!IMPORTANT]
+> All UI updates MUST occur on the main thread. Background threads communicate via Qt signals, which are automatically queued when crossing thread boundaries.
+
+## 11.7 State Management
+
+State is managed at three levels:
+
+| Level | Scope | Storage | Examples |
+|---|---|---|---|
+| **Application State** | Global, survives workspace switch | `data/config/settings.json` | Theme, hotkeys, download dir, update preferences |
+| **Workspace State** | Per workspace, survives restart | `data/workspaces/<name>/` | Browser tabs, clipboard, typing settings, window geometry |
+| **Transient State** | In-memory only, lost on exit | Python objects | Current typing progress, search query, hover states |
+
+In-memory state is represented by Pydantic models for validation and serialization. The `ConfigManager` and `WorkspaceManager` act as state stores that serialize to disk and emit change signals.
+
+## 11.8 Configuration Architecture
+
+```
+data/
+├── config/
+│   ├── settings.json          # Application-level settings (Pydantic-validated)
+│   └── hotkeys.json           # Hotkey bindings (separated for clarity)
+└── workspaces/
+    └── <workspace_name>/
+        ├── meta.json          # Workspace metadata
+        ├── typing/
+        │   └── settings.json  # Per-workspace typing settings
+        └── window/
+            └── geometry.json  # Per-workspace window geometry
+```
+
+All JSON files are written atomically:
+1. Write to `<filename>.tmp`
+2. `os.replace(<filename>.tmp, <filename>)` (atomic on NTFS)
+
+This prevents corruption from crashes during writes.
+
+## 11.9 Plugin Readiness
+
+While a plugin system is out of scope for v1.0, the architecture supports future extensibility:
+
+| Preparation | Implementation |
+|---|---|
+| **Interface segregation** | Core managers expose typed interfaces (Python Protocols) |
+| **Event-driven communication** | New modules can subscribe to existing signals without modifying emitters |
+| **Dependency injection** | Core services are passed to modules via constructor injection, not global state |
+| **Configuration extensibility** | Settings model supports arbitrary nested dictionaries for future plugin settings |
+| **Resource isolation** | Plugins would live in `plugins/<name>/` with their own resources |
+
+---
+
+# 12. Technology Evaluation
+
+## 12.1 Language Selection
+
+| Option | Pros | Cons | Verdict |
+|---|---|---|---|
+| **Python 3.11+** | Rapid development; rich ecosystem; Pydantic for models; PyInstaller for distribution; large talent pool | Slower than compiled languages; larger binary; GIL limits CPU parallelism | ✅ **Selected** |
+| C# / .NET | Native Windows; excellent UI frameworks (WPF, WinUI); fast | No mature embedded Chromium-in-WPF solution comparable to Qt WebEngine; harder to portable-deploy without runtime | ❌ |
+| C++ / Qt | Maximum performance; native Qt integration | Slow development; memory management burden; smaller talent pool | ❌ |
+| Electron / Node.js | Easy web UI; Chromium built-in | Very large binary (~300 MB); high RAM; not aligned with "lightweight" goal | ❌ |
+| Rust / Tauri | Small binary; modern; secure | Immature GUI ecosystem; Qt WebEngine not available; high learning curve | ❌ |
+
+**Justification:** Python offers the optimal balance of development speed, ecosystem maturity, and distribution tooling. PySide6 provides a production-grade Qt binding with integrated Chromium (Qt WebEngine). The typing engine's performance-critical path (SendInput) is offloaded to native Windows APIs via ctypes, avoiding Python's GIL limitations. PyInstaller produces a self-contained portable folder.
+
+## 12.2 GUI Framework Selection
+
+| Option | Pros | Cons | Verdict |
+|---|---|---|---|
+| **PySide6 (Qt 6)** | Official Qt binding (LGPL); mature; Qt WebEngine (Chromium); native look; accessibility API; comprehensive widget set | Large binary (~150 MB with WebEngine); requires careful resource management | ✅ **Selected** |
+| PyQt6 | Same feature set as PySide6 | GPL license (restrictive for commercial use) unless commercial license purchased | ❌ |
+| Tkinter | Lightweight; stdlib | No embedded browser; dated look; limited accessibility | ❌ |
+| Dear PyGui | Fast rendering; modern | No embedded browser; immature; limited widget set | ❌ |
+| wxPython | Native look; CEF integration possible | CEF integration is complex; smaller community than Qt | ❌ |
+
+**Justification:** PySide6 is the only Python GUI framework that provides an integrated, supported, production-ready Chromium browser engine (Qt WebEngine) while also offering a rich widget toolkit, accessibility APIs, styling (QSS), and a proven deployment story via PyInstaller. The LGPL license allows commercial use without restrictions.
+
+## 12.3 Browser Engine Selection
+
+| Option | Pros | Cons | Verdict |
+|---|---|---|---|
+| **Qt WebEngine (Chromium)** | Integrated with PySide6; single-vendor dependency; well-documented; automatic Chromium updates via Qt releases | Large binary contribution (~100 MB); limited DevTools customization | ✅ **Selected** |
+| CEF (Chromium Embedded Framework) | More control; dedicated browser embedding framework | Complex Python integration (cefpython3 is unmaintained for Python 3.11+); separate process management | ❌ |
+| WebView2 (Microsoft Edge) | Small binary (Edge is pre-installed on Win 10/11); modern | No official Python binding; interop complexity with Qt UI | ❌ |
+| Playwright / Selenium (headless) | Easy to automate | Not for embedding in a GUI; headless only | ❌ |
+
+**Justification:** Qt WebEngine is the natural choice when using PySide6. It is maintained by the Qt Company, receives regular Chromium updates, and integrates seamlessly with the Qt widget tree. No interop layer is needed.
+
+## 12.4 Database Selection
+
+Covered in detail in §13 and §14.
+
+## 12.5 Full Technology Stack
+
+| Component | Technology | Version | License | Justification |
+|---|---|---|---|---|
+| Language | Python | 3.11+ | PSF | See §12.1 |
+| GUI Framework | PySide6 | 6.6+ | LGPL v3 | See §12.2 |
+| Browser Engine | Qt WebEngine | (bundled with PySide6) | LGPL v3 | See §12.3 |
+| Data Validation | Pydantic | 2.x | MIT | Type-safe models; JSON serialization; settings validation |
+| Database | SQLite | 3.35+ (stdlib) | Public Domain | Embedded; zero-config; FTS5 for search; WAL for concurrency |
+| Logging | Loguru | 0.7+ | MIT | Structured logging; rotation; filtering; zero-boilerplate |
+| Windows API | ctypes (stdlib) | — | PSF | SendInput, RegisterHotKey without external dependencies |
+| Windows API (alt) | pywin32 | 306+ | PSF | Higher-level wrappers if ctypes becomes unwieldy |
+| Distribution | PyInstaller | 6.x | GPL (tool, not runtime) | Portable folder output; one-folder mode; icon and metadata embedding |
+| Testing | pytest | 8.x | MIT | Standard Python test framework |
+| Testing (UI) | pytest-qt | 4.x | MIT | Qt widget testing helpers |
+| Testing (coverage) | coverage.py | 7.x | Apache 2.0 | Code coverage measurement |
+| Linting | ruff | 0.4+ | MIT | Fast linting and formatting; replaces flake8 + black + isort |
+| Type Checking | mypy | 1.10+ | MIT | Static type verification |
+| Icons | Lucide Icons | latest | ISC | Consistent, open-source SVG icon set |
+| Fonts | Inter | 4.x | OFL | Modern, highly legible UI font |
+
+---
+
+# 13. Database Design
+
+## 13.1 Storage Strategy Decision
+
+| Strategy | Pros | Cons | Verdict |
+|---|---|---|---|
+| **SQLite for structured data + JSON for configuration** (Hybrid) | Best of both worlds: SQLite handles large datasets and search; JSON handles human-readable config files | Two storage technologies to maintain | ✅ **Selected** |
+| SQLite for everything | Unified storage; powerful queries | Configuration files are harder to manually edit/debug; overhead for small datasets | ❌ |
+| JSON for everything | Simple; human-readable; portable | Slow for large datasets; no indexing; no full-text search; no concurrency control | ❌ |
+
+**Justification:** The hybrid approach uses each technology where it excels. SQLite with FTS5 provides sub-200ms full-text search across 10,000+ clipboard entries — impossible with JSON file scanning. JSON files are used for configuration (settings, geometry, metadata) because they are small, human-readable, and benefit from easy manual editing during development and debugging.
+
+## 13.2 SQLite Schema
+
+### Database: `data/workspaces/<workspace>/clipboard/entries.db`
+
+```sql
+-- Enable WAL mode for concurrent read/write
+PRAGMA journal_mode = WAL;
+PRAGMA foreign_keys = ON;
+
+-- Clipboard entries
+CREATE TABLE IF NOT EXISTS clipboard_entries (
+    id          TEXT PRIMARY KEY,   -- UUID
+    text        TEXT NOT NULL,
+    source_url  TEXT,
+    source_title TEXT,
+    note        TEXT,
+    is_pinned   INTEGER NOT NULL DEFAULT 0,  -- 0 or 1
+    char_count  INTEGER NOT NULL,
+    created_at  TEXT NOT NULL,      -- ISO 8601
+    updated_at  TEXT NOT NULL       -- ISO 8601
+);
+
+-- Categories (tags)
+CREATE TABLE IF NOT EXISTS categories (
+    id          TEXT PRIMARY KEY,   -- UUID
+    name        TEXT NOT NULL UNIQUE,
+    color       TEXT,               -- Hex color code
+    created_at  TEXT NOT NULL
+);
+
+-- Many-to-many: entries ↔ categories
+CREATE TABLE IF NOT EXISTS entry_categories (
+    entry_id    TEXT NOT NULL REFERENCES clipboard_entries(id) ON DELETE CASCADE,
+    category_id TEXT NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+    PRIMARY KEY (entry_id, category_id)
+);
+
+-- Full-text search index
+CREATE VIRTUAL TABLE IF NOT EXISTS clipboard_fts USING fts5(
+    text,
+    note,
+    source_title,
+    content='clipboard_entries',
+    content_rowid='rowid'
+);
+
+-- Triggers to keep FTS index in sync
+CREATE TRIGGER IF NOT EXISTS clipboard_entries_ai AFTER INSERT ON clipboard_entries BEGIN
+    INSERT INTO clipboard_fts(rowid, text, note, source_title)
+    VALUES (new.rowid, new.text, new.note, new.source_title);
+END;
+
+CREATE TRIGGER IF NOT EXISTS clipboard_entries_ad AFTER DELETE ON clipboard_entries BEGIN
+    INSERT INTO clipboard_fts(clipboard_fts, rowid, text, note, source_title)
+    VALUES ('delete', old.rowid, old.text, old.note, old.source_title);
+END;
+
+CREATE TRIGGER IF NOT EXISTS clipboard_entries_au AFTER UPDATE ON clipboard_entries BEGIN
+    INSERT INTO clipboard_fts(clipboard_fts, rowid, text, note, source_title)
+    VALUES ('delete', old.rowid, old.text, old.note, old.source_title);
+    INSERT INTO clipboard_fts(rowid, text, note, source_title)
+    VALUES (new.rowid, new.text, new.note, new.source_title);
+END;
+
+-- Indexes
+CREATE INDEX IF NOT EXISTS idx_entries_pinned ON clipboard_entries(is_pinned);
+CREATE INDEX IF NOT EXISTS idx_entries_created ON clipboard_entries(created_at);
+```
+
+### Database: `data/workspaces/<workspace>/browser/bookmarks.db`
+
+```sql
+CREATE TABLE IF NOT EXISTS bookmarks (
+    id          TEXT PRIMARY KEY,   -- UUID
+    title       TEXT NOT NULL,
+    url         TEXT NOT NULL,
+    folder_id   TEXT REFERENCES bookmark_folders(id) ON DELETE SET NULL,
+    created_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS bookmark_folders (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    parent_id   TEXT REFERENCES bookmark_folders(id) ON DELETE CASCADE,
+    created_at  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_bookmarks_folder ON bookmarks(folder_id);
+```
+
+### Database: `data/workspaces/<workspace>/browser/history.db`
+
+```sql
+CREATE TABLE IF NOT EXISTS browser_history (
+    id          TEXT PRIMARY KEY,
+    url         TEXT NOT NULL,
+    title       TEXT,
+    visit_time  TEXT NOT NULL,      -- ISO 8601
+    visit_count INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS history_fts USING fts5(
+    url, title,
+    content='browser_history',
+    content_rowid='rowid'
+);
+
+CREATE INDEX IF NOT EXISTS idx_history_time ON browser_history(visit_time);
+```
+
+## 13.3 JSON Configuration Files
+
+### `data/config/settings.json`
+```json
+{
+    "version": 1,
+    "general": {
+        "language": "en",
+        "check_updates": true,
+        "restore_session": true,
+        "default_workspace": "default"
+    },
+    "typing": {
+        "default_speed": 5,
+        "pre_typing_delay": 3,
+        "jitter_enabled": true,
+        "jitter_range": 0.15
+    },
+    "appearance": {
+        "theme": "system",
+        "accent_color": "#5B8DEF",
+        "font_family": "Inter",
+        "font_scale": 1.0,
+        "default_opacity": 1.0
+    },
+    "browser": {
+        "home_page": "about:blank",
+        "user_agent": null,
+        "javascript_enabled": true,
+        "cookies_enabled": true,
+        "proxy": "system"
+    },
+    "downloads": {
+        "directory": null,
+        "ask_before_download": true,
+        "show_notifications": true
+    },
+    "clipboard": {
+        "max_entries": 10000,
+        "auto_archive": true,
+        "default_sort": "recency"
+    },
+    "accessibility": {
+        "screen_reader": "auto",
+        "high_contrast": false,
+        "reduce_animations": false,
+        "focus_indicators": true
+    }
+}
+```
+
+### `data/config/hotkeys.json`
+```json
+{
+    "version": 1,
+    "enabled": true,
+    "bindings": {
+        "copy_to_clipboard": "Ctrl+Shift+C",
+        "start_typing": "Ctrl+Shift+T",
+        "pause_resume_typing": "Ctrl+Shift+P",
+        "stop_typing": "Ctrl+Shift+S",
+        "toggle_window": "Ctrl+Shift+B",
+        "toggle_always_on_top": "Ctrl+Shift+A",
+        "global_search": "Ctrl+Shift+F",
+        "switch_workspace": "Ctrl+Shift+W"
+    }
+}
+```
+
+### `data/workspaces/<name>/meta.json`
+```json
+{
+    "version": 1,
+    "name": "Workshop A",
+    "created_at": "2026-08-07T10:00:00Z",
+    "updated_at": "2026-08-07T14:30:00Z",
+    "description": ""
+}
+```
+
+## 13.4 Migration Strategy
+
+Database migrations are managed via a version table and ordered Python migration scripts.
+
+```sql
+CREATE TABLE IF NOT EXISTS schema_version (
+    version INTEGER PRIMARY KEY,
+    applied_at TEXT NOT NULL
+);
+```
+
+On startup, the application:
+1. Reads the current schema version.
+2. Compares it against available migration scripts in `src/storage/migrations/`.
+3. Applies all pending migrations in order.
+4. Updates the schema version.
+
+This is a simple, proven approach used by Django, Alembic, and similar frameworks, without requiring a heavy ORM.
+
+---
+
+# 14. Storage Strategy
+
+## 14.1 Data Categories and Storage Mapping
+
+| Data Category | Volume | Access Pattern | Storage | Rationale |
+|---|---|---|---|---|
+| Clipboard entries | High (10K+ per workspace) | Write frequently, search frequently | SQLite with FTS5 | Full-text search performance |
+| Bookmarks | Low-Medium (100s) | Read-heavy, occasional write | SQLite | Structured queries (folders, sorting) |
+| Browser history | Medium (1K+) | Write on every page load, search occasionally | SQLite with FTS5 | Time-series queries, search |
+| Application settings | Tiny (1 file) | Read on startup, write on change | JSON | Human-readable, easy debugging |
+| Hotkey configuration | Tiny (1 file) | Read on startup, write rarely | JSON | Separated from main settings for clarity |
+| Workspace metadata | Tiny (1 file per workspace) | Read/write on switch | JSON | Simple key-value; human-readable |
+| Window geometry | Tiny (1 file per workspace) | Read/write on resize/move | JSON | Simple structure |
+| Typing settings | Tiny (1 file per workspace) | Read/write on change | JSON | Simple structure |
+| Browser session (tabs) | Small (1 file per workspace) | Read on restore, write on change | JSON | Tab URLs and order; small dataset |
+| Browser profile (cookies, cache, IndexedDB) | Large (100s MB) | Managed by Chromium | Chromium internal (LevelDB, SQLite) | Cannot be replaced; Qt WebEngine manages this |
+| Session state | Small (1 file) | Read on startup, write periodically | JSON | Quick serialize/deserialize |
+| Logs | Medium (rotating files) | Append-only | Text files | Standard log file approach |
+
+## 14.2 Disk Space Budget
+
+| Component | Estimated Size | Notes |
+|---|---|---|
+| Application binary + resources | ~200 MB | PyInstaller output with PySide6 + Qt WebEngine |
+| Per workspace (fresh) | ~25 MB | Mostly Chromium profile initialization |
+| Per workspace (active, 5 tabs, 1K clips) | ~50–150 MB | Chromium cache is the largest contributor |
+| Logs | ~50 MB max | 5 × 10 MB rotation |
+| **Total (1 workspace, light use)** | **~300 MB** | — |
+| **Total (5 workspaces, heavy use)** | **~1 GB** | — |
+
+## 14.3 Backup and Portability
+
+The entire `data/` directory is self-contained. To back up:
+- Copy the `data/` folder.
+
+To move to another machine:
+- Copy the entire `batmanoverlay/` folder (application + data).
+
+The `.bmw` workspace export format is a ZIP file containing:
+```
+workspace_name.bmw (ZIP)
+├── meta.json
+├── clipboard/entries.db
+├── browser/session.json
+├── browser/bookmarks.db
+├── typing/settings.json
+└── window/geometry.json
+```
+
+> [!NOTE]
+> Browser profile data (cookies, local storage) is NOT included in workspace export for security reasons (it may contain authentication tokens). This is documented in the export dialog.
+
+---
+
+# 15. Security Design
+
+## 15.1 Security Principles
+
+1. **Least privilege.** The application runs as a standard user. No admin rights, no elevated tokens.
+2. **Local only.** All data stays on the user's machine. No network communication except browser traffic initiated by the user.
+3. **Transparency.** The application is always visible and identifiable. It never hides its window, process name, or identity.
+4. **Defense in depth.** Input validation at every boundary. Fail-safe defaults.
+5. **Minimal attack surface.** No custom protocols, no listening sockets, no IPC servers.
+
+## 15.2 Security Non-Negotiables — Explicit Confirmation
+
+> [!CAUTION]
+> The following capabilities are **permanently excluded** from the product. Any attempt to add them constitutes a security violation and must be rejected at code review.
+
+| Excluded Capability | Reason |
+|---|---|
+| Hide from screen recording/sharing | Stealth behavior; associated with cheating |
+| Bypass application or browser security | Illegal under CFAA and equivalents |
+| Circumvent online examination systems | Unethical; legal liability |
+| Evade anti-cheat or detection systems | Unethical; legal liability |
+| Impersonate Windows system processes | Malware behavior; triggers antivirus |
+| Inject code into other processes | Requires admin; malware behavior |
+| Hook third-party application APIs | Requires admin; malware behavior |
+| Manipulate memory of other processes | Requires admin; malware behavior |
+| Interfere with Windows security | Illegal; malware behavior |
+| Privilege escalation | Security violation |
+| Install drivers or kernel components | Requires admin; stability risk |
+| Modify Windows registry or internals | Incompatible with portability |
+
+## 15.3 Secure Local Storage
+
+| Data | Protection Mechanism |
+|---|---|
+| Browser cookies | Stored in Chromium's encrypted cookie store (Qt WebEngine default behavior) |
+| Browser local storage | Stored in Chromium's LevelDB within the workspace's browser profile directory |
+| Application settings | Unencrypted JSON (no sensitive data; user preferences only) |
+| Clipboard entries | Unencrypted SQLite (user-generated content; user controls their own data) |
+| Logs | No sensitive data logged (FR-LG-05, FR-LG-06); plain text |
+
+> [!NOTE]
+> **Decision: No additional encryption for clipboard data.** Clipboard entries are user-generated text that the user explicitly copies. Encrypting them would add complexity without meaningful security benefit — an attacker with file system access already has access to the Chromium profile (which contains cookies, passwords, etc.). The appropriate protection is OS-level (disk encryption, user account passwords).
+
+## 15.4 Credential Protection
+
+- The application **does not** store any credentials itself. All authentication is handled by the embedded browser (Chromium).
+- Chromium stores credentials using its built-in credential management, which encrypts passwords using the Windows DPAPI (Data Protection API) — the same mechanism used by Chrome and Edge.
+- The application **does not** expose APIs to read, export, or transmit stored browser credentials.
+
+## 15.5 Session Protection
+
+| Mechanism | Implementation |
+|---|---|
+| PID lock file | Prevents session conflict between instances |
+| Atomic file writes | Prevents corruption on crash |
+| Session integrity check | Validates JSON schema on load; falls back to defaults on corruption |
+| Crash recovery | PID lock detection → recovery prompt |
+
+## 15.6 Input Validation
+
+| Input Surface | Validation |
+|---|---|
+| URL address bar | Sanitize input; reject `javascript:` and `data:` URLs (pass to Chromium's built-in security) |
+| Settings values | Pydantic model validation with range checks, type checks, and enum constraints |
+| Workspace names | Restrict to alphanumeric + space + hyphen + underscore; max 64 characters; filesystem-safe |
+| Hotkey bindings | Validate modifier + key combination; reject reserved system hotkeys |
+| Import files (.bmw) | Validate ZIP structure, schema versions, and file sizes before extraction |
+| Clipboard text | Accept any Unicode text; no length limit enforced at input (soft limit managed at storage) |
+
+## 15.7 Dependency Security
+
+| Practice | Implementation |
+|---|---|
+| Pin all dependencies | `requirements.txt` with exact versions; no floating version specifiers |
+| Audit dependencies | Run `pip-audit` in CI; fail on known vulnerabilities |
+| Minimize dependencies | Only 6 runtime dependencies (PySide6, Pydantic, Loguru, pywin32, plus stdlib) |
+| Supply chain verification | Verify package hashes with `pip install --require-hashes` |
+
+## 15.8 Update Security
+
+- Updates are checked via HTTPS only (TLS 1.2+).
+- Update metadata includes a cryptographic hash (SHA-256) of the release archive.
+- The application **does not** auto-update; it notifies the user and directs them to the download page.
+- No code execution from the update mechanism.
+
+## 15.9 Privacy Considerations
+
+| Principle | Implementation |
+|---|---|
+| No telemetry | The application does not send any data to any server |
+| No analytics | No usage tracking, crash reporting, or feature flags from external services |
+| No accounts | No user accounts, no sign-up, no authentication with batmanoverlay servers |
+| Local-only data | All data (clipboard, bookmarks, history, settings) stays in the local `data/` directory |
+| No third-party SDKs | No advertising, analytics, or social SDKs |
+| Clear data ownership | Users own their data; it's in plain files they can inspect, back up, or delete |
+
+---
+
+# 16. Performance Strategy
+
+## 16.1 Performance Budgets
+
+| Metric | Budget | Measurement Method |
+|---|---|---|
+| Cold startup to interactive UI | < 5 s | Automated test; timer from process start to `QWidget.show()` completion |
+| Warm restore (from tray/minimize) | < 500 ms | Manual measurement |
+| Clipboard entry add | < 100 ms | Automated test; timer from `insert` call to signal emission |
+| Clipboard search (10K entries) | < 200 ms | Automated benchmark; FTS5 query |
+| Global search | < 300 ms | Automated benchmark; aggregated results |
+| Workspace switch | < 1 s | Manual measurement; full state swap |
+| Typing engine latency | < 5 ms per keystroke overhead | Automated test; timer around `SendInput` call |
+| UI interaction response | < 100 ms | Manual measurement; click to visual feedback |
+| Idle RAM (0 tabs) | < 200 MB | Automated test; `psutil` measurement after 60 s idle |
+| Idle CPU (0 tabs) | < 2% | Automated test; 60 s average |
+
+## 16.2 Optimization Techniques
+
+### Startup Optimization
+1. **Deferred module initialization.** Only initialize the active workspace and its visible panel. Load Settings, Bookmarks, and other panels on first access.
+2. **Lazy browser tab loading.** Restore tab metadata (URL, title) but don't load content until the tab is activated.
+3. **Splash screen masking.** Show splash immediately (Qt is fast to show a QSplashScreen); initialize modules behind it.
+4. **Pre-compiled Python.** PyInstaller bundles `.pyc` bytecode; reduces import time.
+
+### Memory Optimization
+1. **Browser tab suspension.** After a configurable idle period (default: 30 min), unload inactive tabs to free renderer memory. Reload on tab activation.
+2. **Clipboard entry virtualization.** Use `QListView` with a custom model instead of `QListWidget`. Only instantiate widgets for visible entries.
+3. **Chromium cache cap.** Set `--disk-cache-size=209715200` (200 MB) via `QTWEBENGINE_CHROMIUM_FLAGS`.
+4. **Image lazy loading.** Don't render clipboard entry source favicons until scrolled into view.
+
+### CPU Optimization
+1. **Event coalescing.** Debounce search input (300 ms delay before query) to avoid unnecessary queries.
+2. **Throttled auto-save.** Session auto-save runs at most once per configured interval; doesn't fire if nothing changed (dirty flag).
+3. **Background thread for typing.** Typing engine runs on a `QThread` to avoid blocking the UI.
+4. **Efficient FTS5 queries.** Use `MATCH` with prefix search for incremental search; avoid `LIKE '%query%'`.
+
+### Disk Optimization
+1. **WAL mode for SQLite.** Reduces write contention; allows concurrent reads during writes.
+2. **Atomic JSON writes.** Write to `.tmp` then `os.replace()` to minimize write amplification.
+3. **Log rotation.** Bounded at 50 MB total (5 × 10 MB).
+
+## 16.3 Performance Testing
+
+See §20 for the full testing strategy. Performance-specific tests:
+
+| Test | Tool | Frequency |
+|---|---|---|
+| Startup time benchmark | pytest + `time.perf_counter` | Every CI build |
+| Memory usage under load | pytest + `psutil` | Weekly |
+| Clipboard search benchmark (1K, 5K, 10K entries) | pytest + `time.perf_counter` | Every CI build |
+| 72-hour soak test (stability) | Custom script | Pre-release |
+| Tab stress test (20 tabs) | Manual | Pre-release |
+
+---
+
+# 17. Accessibility
+
+## 17.1 Standards Compliance
+
+The application targets **WCAG 2.1 Level AA** adapted for desktop applications, following the [W3C User Agent Accessibility Guidelines (UAAG)](https://www.w3.org/TR/UAAG20/) and Qt's built-in accessibility framework.
+
+## 17.2 Implementation Checklist
+
+| Category | Requirement | Implementation |
+|---|---|---|
+| **Keyboard** | All controls reachable via Tab/Shift+Tab | Set `tabOrder()` on all widgets; verify no dead ends |
+| **Keyboard** | Activatable via Enter/Space | Default Qt behavior for buttons; custom handlers for cards |
+| **Keyboard** | Escape closes dialogs and modals | Connect `Escape` key to `close()` on all dialogs |
+| **Focus** | Visible focus indicator on all interactive elements | 2px solid `--accent` outline; high-contrast override |
+| **Focus** | Logical focus order (top-to-bottom, left-to-right) | Manual `setTabOrder()` chain |
+| **Screen Reader** | All widgets expose `accessibleName` and `accessibleDescription` | Set via `QWidget.setAccessibleName()` |
+| **Screen Reader** | Dynamic content changes announced | Use `QAccessible::updateAccessibility()` for state changes |
+| **Screen Reader** | Tested with NVDA and JAWS | QA checklist item |
+| **Color** | Minimum 4.5:1 contrast ratio | Verified for both themes using contrast checker |
+| **Color** | Not sole information carrier | Icons + text accompany all color indicators |
+| **Motion** | Animations disableable | Settings toggle; also respects `prefers-reduced-motion` via `QStyleHints` |
+| **Scaling** | UI scales 80%–200% | Relative sizing; no hardcoded pixel values for text |
+| **Scaling** | Respects system DPI | Qt handles DPI scaling; verify no clipping at 150%, 200% |
+| **High Contrast** | Supports Windows High Contrast mode | Detect via `QPalette`; apply high-contrast stylesheet |
+| **Typing Engine** | Status announced to screen readers | Announce "Typing started", "Typing paused", "Typing complete" |
+
+## 17.3 Screen Reader Announcement Strategy
+
+| Event | Announcement Text | Method |
+|---|---|---|
+| Clipboard entry added | "Copied: [first 50 chars]" | `QAccessible.updateAccessibility` with `TextInserted` event |
+| Typing started | "Typing started. [N] characters. Estimated [T] seconds." | Status bar `accessibleName` update |
+| Typing paused | "Typing paused." | Status bar update |
+| Typing resumed | "Typing resumed." | Status bar update |
+| Typing completed | "Typing completed." | Status bar update |
+| Workspace switched | "Workspace switched to [name]." | Title bar `accessibleName` update |
+| Error | "Error: [message]" | Dialog `accessibleName` |
+
+---
+
+# 18. Error Handling
+
+## 18.1 Error Hierarchy
+
+```python
+class BatmanOverlayError(Exception):
+    """Base exception for all application errors."""
+
+class StorageError(BatmanOverlayError):
+    """Errors related to data storage (SQLite, JSON, filesystem)."""
+
+class ClipboardStorageError(StorageError):
+    """Clipboard-specific storage failures."""
+
+class SessionCorruptionError(StorageError):
+    """Session file is corrupted or unreadable."""
+
+class BrowserError(BatmanOverlayError):
+    """Errors from the embedded browser engine."""
+
+class TabCrashError(BrowserError):
+    """A browser tab's renderer process has crashed."""
+
+class TypingError(BatmanOverlayError):
+    """Errors from the typing engine."""
+
+class TargetWindowLostError(TypingError):
+    """The target window closed or lost focus during typing."""
+
+class HotkeyError(BatmanOverlayError):
+    """Errors related to global hotkey registration."""
+
+class HotkeyConflictError(HotkeyError):
+    """A hotkey is already registered by another application."""
+
+class ConfigurationError(BatmanOverlayError):
+    """Errors in configuration loading or validation."""
+
+class WorkspaceError(BatmanOverlayError):
+    """Errors in workspace management."""
+```
+
+## 18.2 Error Recovery Matrix
+
+See Module 14 (§7.14) for the complete error recovery strategy table.
+
+## 18.3 User-Facing Error Message Guidelines
+
+All error messages follow this structure:
+
+1. **What happened** (factual, no jargon)
+2. **Why it matters** (impact on the user)
+3. **What to do** (actionable next step)
+
+**Example:**
+> ❌ "SQLite3 OperationalError: database is locked"
+>
+> ✅ "Couldn't save to your clipboard. The data file may be in use by another process. Try closing other instances of batmanoverlay and try again."
+
+---
+
+# 19. Logging
+
+## 19.1 Logging Configuration
+
+| Parameter | Value |
+|---|---|
+| Library | Loguru |
+| Default level | INFO |
+| Format | `{time:YYYY-MM-DDTHH:mm:ss.SSSZ} | {level: <8} | {module}:{function}:{line} | {message}` |
+| File sink | `data/logs/batmanoverlay.log` |
+| Rotation | 10 MB |
+| Retention | 5 files |
+| Compression | gzip (`.log.gz`) |
+| Console sink | DEBUG level (development only; disabled in release) |
+
+## 19.2 Logged Events
+
+| Event | Level | Module | Example Message |
+|---|---|---|---|
+| Application startup | INFO | app | "batmanoverlay v1.0.0 starting on Windows 11 23H2" |
+| Application shutdown | INFO | app | "Graceful shutdown completed" |
+| Workspace created | INFO | workspace | "Workspace created: Workshop A" |
+| Workspace switched | INFO | workspace | "Switched to workspace: Workshop A" |
+| Workspace deleted | INFO | workspace | "Workspace deleted: Old Project" |
+| Browser tab opened | INFO | browser.tab | `{"url": "https://...", "tab_id": 3}` |
+| Browser tab closed | INFO | browser.tab | `{"tab_id": 3}` |
+| Browser tab crashed | ERROR | browser.tab | `{"tab_id": 3, "status": "AbnormalTermination"}` |
+| Clipboard entry added | DEBUG | clipboard | `{"entry_id": "uuid", "char_count": 450}` |
+| Typing started | INFO | typing | `{"entry_id": "uuid", "speed": 5, "char_count": 450}` |
+| Typing paused | INFO | typing | `{"entry_id": "uuid", "chars_typed": 200}` |
+| Typing resumed | INFO | typing | `{"entry_id": "uuid", "chars_typed": 200}` |
+| Typing cancelled | INFO | typing | `{"entry_id": "uuid", "chars_typed": 200}` |
+| Typing completed | INFO | typing | `{"entry_id": "uuid", "duration_ms": 45000}` |
+| Hotkey registered | DEBUG | hotkey | `{"action": "start_typing", "key": "Ctrl+Shift+T"}` |
+| Hotkey conflict | WARNING | hotkey | `{"action": "start_typing", "key": "Ctrl+Shift+T"}` |
+| Session auto-saved | DEBUG | session | "Session auto-saved" |
+| Session recovered | INFO | session | "Session recovered from crash" |
+| Config loaded | DEBUG | config | "Settings loaded from data/config/settings.json" |
+| Config validation error | WARNING | config | `{"field": "typing.default_speed", "value": 15, "fallback": 5}` |
+| Database migration | INFO | storage | "Applied migration v001 → v002" |
+| Disk space warning | WARNING | storage | "Less than 50 MB free on data drive" |
+| Unhandled exception | CRITICAL | app | "Unhandled exception: [type]: [message]" |
+
+## 19.3 What Is NOT Logged
+
+| Data | Reason |
+|---|---|
+| Clipboard text content | Privacy |
+| Typed text content | Privacy |
+| URLs visited (beyond tab open/close events) | Privacy |
+| Passwords, tokens, cookies | Security |
+| Personally identifiable information | Privacy |
+
+---
+
+# 20. Testing Strategy
+
+## 20.1 Testing Pyramid
+
+```
+          ╱╲
+         ╱  ╲
+        ╱ E2E╲           Manual QA + UI automation (10%)
+       ╱──────╲
+      ╱        ╲
+     ╱Integration╲       Integration tests (20%)
+    ╱──────────────╲
+   ╱                ╲
+  ╱    Unit Tests     ╲   Unit tests (70%)
+ ╱──────────────────────╲
+```
+
+## 20.2 Unit Tests
+
+| Module | Key Test Cases | Framework |
+|---|---|---|
+| `clipboard_manager` | Add, delete, pin, unpin, search, categorize, bulk delete, undo | pytest |
+| `clipboard_store` | SQLite CRUD, FTS5 search accuracy, concurrent access, schema migration | pytest |
+| `typing_engine` | Speed calibration, jitter range, Unicode handling, pause/resume/cancel state machine | pytest |
+| `typing_queue` | Add, remove, reorder, sequential processing | pytest |
+| `workspace_manager` | Create, rename, duplicate, delete, switch, export, import | pytest |
+| `config_manager` | Load, save, validate, migrate, reset defaults, invalid input handling | pytest |
+| `session_manager` | Auto-save, crash detection (PID lock), recovery, integrity check | pytest |
+| `hotkey_manager` | Register, unregister, conflict detection, master toggle | pytest |
+| `search_engine` | Cross-source search, result grouping, performance under load | pytest |
+| `models/*` | Pydantic model validation, serialization, deserialization, edge cases | pytest |
+| `utils/platform` | SendInput wrapper (mock-based), RegisterHotKey wrapper (mock-based) | pytest |
+| `utils/validators` | URL validation, workspace name validation, hotkey validation | pytest |
+
+**Coverage Target:** ≥80% line coverage; ≥90% for core business logic modules.
+
+## 20.3 Integration Tests
+
+| Test Scenario | Components Involved | Description |
+|---|---|---|
+| Copy-to-Clipboard flow | Browser → ClipboardManager → ClipboardStore | Simulate text selection and verify storage |
+| Type-from-Clipboard flow | ClipboardManager → TypingQueue → TypingEngine | Select entry, verify typing job creation and execution |
+| Workspace lifecycle | WorkspaceManager → Browser → Clipboard → Config | Create workspace, add data, switch, verify isolation |
+| Session save/restore | SessionManager → WorkspaceManager → Config | Save session, simulate crash (delete lock file), restore |
+| Hotkey-to-action pipeline | HotkeyManager → Events → TypingEngine | Simulate hotkey message, verify typing starts |
+| Settings change propagation | ConfigManager → Events → All dependent modules | Change theme, verify UI updates; change speed, verify engine uses new speed |
+
+## 20.4 UI Tests
+
+| Test | Tool | Description |
+|---|---|---|
+| Main window rendering | pytest-qt | Window opens, sidebar visible, panels switch correctly |
+| Clipboard panel | pytest-qt | Entries display, search filters, pin/unpin, delete |
+| Typing panel | pytest-qt | Controls enable/disable based on state; progress updates |
+| Settings panel | pytest-qt | All settings render, changes persist, reset works |
+| Theme switching | pytest-qt | Dark ↔ Light applies without crash; colors correct |
+| Empty states | pytest-qt | All panels show correct empty state on fresh workspace |
+| Dialog interactions | pytest-qt | Confirmation dialogs accept/cancel correctly |
+
+## 20.5 Performance Tests
+
+| Test | Metric | Tool |
+|---|---|---|
+| Cold startup benchmark | Time to `QWidget.show()` | pytest + `time.perf_counter` |
+| Clipboard insert benchmark (1K, 5K, 10K) | Time per insert; total time | pytest |
+| Clipboard search benchmark (1K, 5K, 10K entries) | Time per query | pytest |
+| Memory usage (idle, 5 tabs, 20 tabs) | RSS in MB | pytest + psutil |
+| Typing engine throughput | Characters per second at each speed level | pytest |
+| Workspace switch time | Time from trigger to UI complete | pytest |
+
+## 20.6 Stress Tests
+
+| Test | Description | Duration |
+|---|---|---|
+| 72-hour soak | Application running with 5 tabs, periodic typing | 72 hours |
+| Rapid workspace switching | Switch 100 times in 60 seconds | 60 s |
+| Clipboard flood | Insert 10,000 entries in rapid succession | Until complete |
+| Tab storm | Open and close 50 tabs rapidly | Until complete |
+
+## 20.7 Manual QA Checklist
+
+| # | Check | Pass/Fail |
+|---|---|---|
+| 1 | Application starts on clean Windows 10 (1809) without admin | |
+| 2 | Application starts on Windows 11 (23H2) without admin | |
+| 3 | ChatGPT loads, login works, streaming responses render | |
+| 4 | Claude loads, login works, artifacts render | |
+| 5 | Gemini loads, Google login works | |
+| 6 | Google Docs loads, editing works | |
+| 7 | Google Sheets loads, formulas work | |
+| 8 | Notion loads, page navigation works | |
+| 9 | GitHub loads, repo browsing works | |
+| 10 | StackOverflow loads, search works | |
+| 11 | Copy to Smart Clipboard from all sites | |
+| 12 | Search clipboard with 100+ entries | |
+| 13 | Pin/unpin clipboard entries | |
+| 14 | Type snippet into Notepad at all 10 speed levels | |
+| 15 | Type snippet into VS Code | |
+| 16 | Type snippet into Microsoft Word | |
+| 17 | Type snippet into a web form (browser) | |
+| 18 | Pause, resume, cancel typing | |
+| 19 | Queue multiple snippets and verify sequential typing | |
+| 20 | Unicode typing: Arabic, Chinese, Japanese, Korean, emoji | |
+| 21 | Create, rename, duplicate, delete workspace | |
+| 22 | Switch workspaces and verify isolation | |
+| 23 | Export/import workspace | |
+| 24 | Global hotkeys work when batmanoverlay is not focused | |
+| 25 | Reconfigure hotkeys in settings | |
+| 26 | Window always-on-top works | |
+| 27 | Opacity slider works (10%–100%) | |
+| 28 | Collapse/expand window | |
+| 29 | Pin window position | |
+| 30 | Window position/size remembered across restarts | |
+| 31 | Multi-monitor: position on secondary monitor | |
+| 32 | Dark theme renders correctly | |
+| 33 | Light theme renders correctly | |
+| 34 | Font scaling (80%–200%) | |
+| 35 | DPI scaling: 100%, 125%, 150%, 200% | |
+| 36 | Keyboard-only navigation (no mouse) | |
+| 37 | Screen reader (NVDA): all controls announced | |
+| 38 | Crash recovery: kill process, restart, verify prompt | |
+| 39 | Auto-save: verify session file updated after interval | |
+| 40 | Global search across clipboard, bookmarks, tabs, history | |
+| 41 | Downloads: download a file, verify completion | |
+| 42 | Bookmarks: add, rename, organize in folders | |
+| 43 | Find-in-page (Ctrl+F) in browser | |
+| 44 | PDF viewing in browser | |
+| 45 | Application does not appear in Task Manager as a system process | |
+| 46 | Application process name is "batmanoverlay.exe" | |
+
+---
+
+# 21. Deployment Strategy
+
+## 21.1 Build Pipeline
+
+```mermaid
+graph LR
+    SRC["Source Code"] --> LINT["ruff lint + format check"]
+    LINT --> TYPE["mypy type check"]
+    TYPE --> TEST["pytest (unit + integration)"]
+    TEST --> BUILD["PyInstaller --onedir"]
+    BUILD --> SIGN["Code signing (optional)"]
+    SIGN --> ARCHIVE["ZIP archive"]
+    ARCHIVE --> HASH["SHA-256 hash"]
+    HASH --> RELEASE["GitHub Release"]
+```
+
+## 21.2 PyInstaller Configuration
+
+```python
+# build.py (conceptual specification)
+PyInstaller(
+    entrypoint='src/main.py',
+    name='batmanoverlay',
+    onedir=True,                          # Portable folder, not single file
+    console=False,                         # GUI application, no console window
+    icon='resources/images/icon.ico',
+    add_data=[
+        ('resources/icons', 'resources/icons'),
+        ('resources/fonts', 'resources/fonts'),
+        ('resources/themes', 'resources/themes'),
+        ('resources/images', 'resources/images'),
+    ],
+    hidden_imports=[
+        'PySide6.QtWebEngineWidgets',
+        'PySide6.QtWebEngineCore',
+    ],
+    exclude_module=[
+        'tkinter',
+        'test',
+        'unittest',
+    ],
+)
+```
+
+## 21.3 Distribution Format
+
+| Artifact | Format | Contents |
+|---|---|---|
+| Release archive | `batmanoverlay-v1.0.0-win-x64.zip` | Self-contained folder: `batmanoverlay.exe`, DLLs, resources, `data/` template |
+| Hash file | `batmanoverlay-v1.0.0-win-x64.zip.sha256` | SHA-256 hash for integrity verification |
+| Changelog | `CHANGELOG.md` (in archive and on GitHub) | Release notes |
+
+## 21.4 Update Mechanism
+
+1. On startup (if enabled in settings), the application sends an HTTPS GET request to a version endpoint (e.g., `https://api.github.com/repos/<org>/batmanoverlay/releases/latest`).
+2. Compares the remote version with the local version.
+3. If a newer version is available, shows a non-blocking notification: *"A new version of batmanoverlay is available (v1.1.0). [Download] [Dismiss]"*
+4. "Download" opens the release page in the system browser.
+5. The application **does not** auto-download, auto-install, or auto-replace itself. The user manually downloads and extracts the new version.
+
+**Justification:** Auto-update mechanisms are complex and introduce security risk (code execution from remote). For a portable application, manual update is appropriate and expected.
+
+## 21.5 Code Signing (Optional, Recommended)
+
+- Sign `batmanoverlay.exe` with a code-signing certificate (e.g., from DigiCert or Sectigo).
+- Signing reduces Windows SmartScreen warnings and builds user trust.
+- If no certificate is available, document the expected SmartScreen warning in the README.
+
+---
+
+# 22. Risks
+
+| ID | Risk | Likelihood | Impact | Mitigation |
+|---|---|---|---|---|
+| R-01 | Qt WebEngine binary size makes distribution too large (> 300 MB) | High | Medium | Accept the trade-off; document download size; explore UPX compression for non-Chromium DLLs |
+| R-02 | Website compatibility issues (ChatGPT, Claude) due to user-agent or feature detection | Medium | High | Match Chrome's user-agent string; test monthly; maintain a compatibility matrix |
+| R-03 | Antivirus false positives (PyInstaller executables are frequently flagged) | High | High | Code signing (§21.5); submit to major AV vendors for whitelisting; transparent process name |
+| R-04 | SendInput blocked by UAC or Group Policy in corporate environments | Medium | Medium | Document limitation; provide fallback using `pyperclip` + "Paste" instruction |
+| R-05 | Qt WebEngine Chromium version lags behind, causing website breakage | Medium | High | Pin PySide6 to recent releases; test quarterly; document minimum Qt version |
+| R-06 | High memory usage with many browser tabs | High | Medium | Tab suspension after idle period; document recommended tab count (≤10) |
+| R-07 | Chromium profile data consumes excessive disk space | Medium | Low | Configurable cache size; "Clear Browser Data" in settings |
+| R-08 | Users misuse the product for cheating despite explicit non-goals | Low | High | Clear documentation, ToS, and ethical use policy; no stealth features exist |
+| R-09 | Python GIL causes UI stuttering during heavy clipboard operations | Low | Medium | Offload database writes to `QThreadPool`; use WAL mode |
+| R-10 | PySide6 LGPL license compliance | Low | High | Do not modify PySide6 source; dynamically link (default); document license in About |
+
+---
+
+# 23. Assumptions
+
+| ID | Assumption | Risk if Wrong | Validation |
+|---|---|---|---|
+| A-01 | Target machines have Windows 10 v1809 or later | Application won't start on older Windows | Check `sys.getwindowsversion()` at startup; show error if too old |
+| A-02 | Target machines have ≥ 8 GB RAM | Application may be slow or cause system swapping | Document minimum requirements; test on 4 GB machine |
+| A-03 | Target machines have ≥ 500 MB free disk space | Application data may not save | Check disk space at startup; warn if low |
+| A-04 | Users have internet access for browser features | Browser pages won't load; app is still useful for clipboard/typing with cached content | Offline indicator in status bar |
+| A-05 | PySide6 6.6+ includes Qt WebEngine for Windows x86_64 | Application cannot embed a browser | Verified: PySide6 6.6+ includes QtWebEngine on Windows |
+| A-06 | `SendInput` works without admin privileges for keyboard simulation | Typing engine won't function | Verified: `SendInput` works for standard users targeting standard windows. May fail for elevated windows (UAC prompts, admin CMD) |
+| A-07 | `RegisterHotKey` allows global hotkey registration without admin | Hotkeys won't work | Verified: `RegisterHotKey` works for standard users |
+| A-08 | PyInstaller can package PySide6 + QtWebEngine into a portable folder | Distribution model fails | Verified: PyInstaller supports PySide6 `onedir` packaging |
+| A-09 | SQLite FTS5 is available in Python's built-in `sqlite3` module on Windows | Full-text search unavailable | Verified: Python 3.11+ on Windows includes FTS5 |
+| A-10 | Users will not run the application from read-only media (e.g., CD-ROM) | Data cannot be saved | Document requirement for writable storage |
+
+---
+
+# 24. Future Roadmap
+
+## Phase 1: v1.0 — Core Product (Current Scope)
+All P0 and most P1 requirements as documented in this PRD.
+
+## Phase 2: v1.1 — Polish & Power Features (3–6 months after v1.0)
+
+| Feature | Description |
+|---|---|
+| Cloud sync (opt-in) | Sync workspaces across devices via user's own cloud storage (Google Drive, OneDrive, Dropbox) |
+| Plugin API (v1) | Define and document a plugin API; enable community extensions |
+| Shared browser profile option | Allow workspaces to share a single Chromium profile to save disk space |
+| Workspace templates | Pre-built workspace configurations for common use cases (Teaching, Research, Support) |
+| Rich clipboard | Support images, formatted text, and code blocks in clipboard entries |
+| Snippet variables | Template variables in clipboard entries (e.g., `{date}`, `{name}`) with auto-fill |
+| Keyboard shortcut overlay | Visual overlay showing all available hotkeys |
+
+## Phase 3: v2.0 — Platform Expansion (6–12 months after v1.0)
+
+| Feature | Description |
+|---|---|
+| macOS support | Port to macOS using PySide6's cross-platform capabilities |
+| Linux support | Port to Linux (Ubuntu, Fedora) |
+| Team workspaces | Shared workspaces for teams with role-based access |
+| Plugin marketplace | Centralized marketplace for community plugins |
+| Advanced search | Regex search, date range filters, boolean operators |
+| AI integration (optional) | Local LLM integration for summarization (e.g., llama.cpp) |
+| Theme editor | Visual theme customization tool |
+| Multi-language UI | Internationalization (i18n) for non-English users |
+
+---
+
+# 25. Open Questions
+
+| ID | Question | Impact | Proposed Answer | Decision Owner |
+|---|---|---|---|---|
+| OQ-01 | What license model will be used (open source vs. proprietary vs. freemium)? | Affects distribution, contribution model, and monetization | Open source (MIT or Apache 2.0) for v1.0 to build community; consider freemium for premium features in v2.0 | Product Owner |
+| OQ-02 | Should the application support system tray minimization? | UX: tray icon vs. always-visible | Recommend yes — minimize to tray to reduce taskbar clutter; restore via hotkey or tray click | Product Owner |
+| OQ-03 | Should browser profiles be shared across workspaces by default or isolated? | Disk space vs. session isolation | Recommend isolated by default (security and UX), with shared option in v1.1 | Architect |
+| OQ-04 | What is the maximum supported number of workspaces? | Performance, disk space | Recommend soft limit of 20; no hard limit but warn about disk usage | Architect |
+| OQ-05 | Should the typing engine handle special key combinations (Ctrl+C, Ctrl+V, etc.) embedded in clipboard text? | Typing fidelity for code snippets | Recommend no — type only printable characters and whitespace. Special keys are a security risk and increase complexity | Architect + Security |
+| OQ-06 | Should clipboard entries support rich text (HTML, Markdown) or plain text only? | Feature scope; storage complexity | Recommend plain text only for v1.0; rich text in v1.1 | Product Owner |
+| OQ-07 | What update check endpoint should be used? | Infrastructure dependency | Recommend GitHub Releases API (no custom server needed for v1.0) | DevOps |
+| OQ-08 | Should a code-signing certificate be purchased before v1.0 launch? | AV false positive risk | Strongly recommend yes to avoid SmartScreen friction | Product Owner |
+| OQ-09 | What is the branding and visual identity (logo, colors, app icon)? | UI implementation | Needed before UI development begins | Design Lead |
+| OQ-10 | Should the application support a "quiet mode" where it auto-starts with Windows? | UX for daily users | Recommend as a v1.1 feature to keep v1.0 scope manageable | Product Owner |
+
+---
+
+# 26. Appendix
+
+## A. Glossary
+
+| Term | Definition |
+|---|---|
+| **batmanoverlay** | The product name. A portable Windows desktop productivity and presentation assistant. |
+| **Smart Clipboard** | The application's persistent, searchable clipboard that stores text copied from the embedded browser. |
+| **Typing Engine** | The module that simulates keyboard input character-by-character into a target application window. |
+| **Workspace** | An isolated context containing browser tabs, clipboard entries, typing settings, and window geometry. |
+| **SendInput** | A Windows API function for synthesizing keyboard and mouse input events. |
+| **RegisterHotKey** | A Windows API function for registering system-wide keyboard shortcuts. |
+| **FTS5** | SQLite's Full-Text Search extension, version 5. Provides fast full-text search indexing. |
+| **WAL** | Write-Ahead Logging. An SQLite journal mode that improves concurrent read/write performance. |
+| **Qt WebEngine** | Qt's Chromium-based browser engine, used for embedding web content in Qt applications. |
+| **PySide6** | The official Python binding for the Qt 6 framework, maintained by the Qt Company. |
+| **.bmw** | batmanoverlay Workspace file format. A ZIP archive containing all workspace data for export/import. |
+| **PyInstaller** | A tool for packaging Python applications into standalone executables. |
+| **DPAPI** | Windows Data Protection API. Used by Chromium to encrypt stored credentials. |
+
+## B. Reference Architecture Diagram
+
+```mermaid
+graph TB
+    subgraph "User Interface Layer"
+        MW["Main Window"]
+        TB["Title Bar"]
+        SB["Sidebar"]
+        STB["Status Bar"]
+        BP["Browser Panel"]
+        CP["Clipboard Panel"]
+        TP["Typing Panel"]
+        SP["Settings Panel"]
+        SD["Search Dialog"]
+    end
+
+    subgraph "Core Services Layer"
+        WM["Workspace Manager"]
+        SM["Session Manager"]
+        CM["Config Manager"]
+        HM["Hotkey Manager"]
+        SE["Search Engine"]
+        LG["Logger"]
+    end
+
+    subgraph "Feature Modules Layer"
+        BR["Browser Module"]
+        CB["Clipboard Module"]
+        TE["Typing Engine"]
+    end
+
+    subgraph "Data Access Layer"
+        DB["SQLite (FTS5, WAL)"]
+        JS["JSON Store"]
+        FS["File System"]
+    end
+
+    subgraph "Platform Layer"
+        SI["SendInput API"]
+        RH["RegisterHotKey API"]
+        QT["Qt Framework"]
+    end
+
+    MW --> TB & SB & STB & BP & CP & TP & SP & SD
+    BP --> BR
+    CP --> CB
+    TP --> TE
+    SD --> SE
+
+    BR --> WM
+    CB --> WM
+    TE --> SI
+
+    WM --> DB & JS & FS
+    SM --> JS
+    CM --> JS
+    HM --> RH
+    SE --> DB
+    CB --> DB
+
+    MW --> QT
+    LG --> FS
+```
+
+## C. Keyboard Shortcut Reference
+
+| Shortcut | Context | Action |
+|---|---|---|
+| `Ctrl+T` | Browser | New tab |
+| `Ctrl+W` | Browser | Close tab |
+| `Ctrl+Tab` | Browser | Next tab |
+| `Ctrl+Shift+Tab` | Browser | Previous tab |
+| `Ctrl+L` | Browser | Focus address bar |
+| `Ctrl+F` | Browser | Find in page |
+| `Ctrl+D` | Browser | Bookmark current page |
+| `Ctrl+Plus` | Browser | Zoom in |
+| `Ctrl+Minus` | Browser | Zoom out |
+| `Ctrl+0` | Browser | Reset zoom |
+| `F5` | Browser | Refresh |
+| `Alt+Left` | Browser | Back |
+| `Alt+Right` | Browser | Forward |
+| `Ctrl+Shift+C` | Global | Copy to Smart Clipboard |
+| `Ctrl+Shift+T` | Global | Start typing |
+| `Ctrl+Shift+P` | Global | Pause/Resume typing |
+| `Ctrl+Shift+S` | Global | Stop typing |
+| `Ctrl+Shift+B` | Global | Show/Hide window |
+| `Ctrl+Shift+A` | Global | Toggle always-on-top |
+| `Ctrl+Shift+F` | Global | Global search |
+| `Ctrl+Shift+W` | Global | Switch workspace |
+| `Escape` | Dialog/Search | Close dialog or search |
+| `F12` | Application | Toggle DevTools (if enabled) |
+
+## D. System Requirements
+
+| Requirement | Minimum | Recommended |
+|---|---|---|
+| Operating System | Windows 10 v1809 | Windows 11 23H2 |
+| CPU | Intel Core i3 / AMD Ryzen 3 (2 cores) | Intel Core i5 / AMD Ryzen 5 (4 cores) |
+| RAM | 4 GB | 8 GB |
+| Storage | 500 MB free (application + data) | 2 GB free |
+| Display | 1280×720 | 1920×1080 |
+| Internet | Optional (required for browser features) | Broadband |
+
+## E. Competitive Landscape (Brief)
+
+| Product | Category | Differentiator from batmanoverlay |
+|---|---|---|
+| Ditto Clipboard | Clipboard manager | No embedded browser; no typing engine |
+| AutoHotkey | Scripting tool | General-purpose scripting; steep learning curve; not a productivity overlay |
+| Teleprompter apps | Presentation tools | Read-only; no browser; no typing |
+| Browser extensions | Various | Limited to browser; no system-wide typing |
+| PhraseExpress | Text expansion | Template-based; no embedded browser; corporate pricing |
+
+batmanoverlay uniquely combines an embedded browser, smart clipboard, and character typing engine in a portable, transparent overlay. No existing product offers this combination.
+
+---
+
+*End of Document*
+
+**Document Status:** Draft — Pending Stakeholder Approval
+**Next Action:** Review open questions (§25), resolve branding (OQ-09), and approve for development kickoff.

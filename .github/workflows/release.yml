@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-release:
+    name: Build Portable Release Package
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run Build Script
+        run: python scripts/build.py
+
+      - name: Compress Release Archive
+        shell: powershell
+        run: |
+          Compress-Archive -Path dist/batmanoverlay -DestinationPath dist/batmanoverlay-${{ github.ref_name }}-windows-x64.zip
+
+      - name: Generate SHA-256 Checksum
+        shell: powershell
+        run: |
+          Get-FileHash -Path dist/batmanoverlay-${{ github.ref_name }}-windows-x64.zip -Algorithm SHA256 | Format-List > dist/checksums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/batmanoverlay-${{ github.ref_name }}-windows-x64.zip
+            dist/checksums.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

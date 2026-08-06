@@ -1,0 +1,1342 @@
+# batmanoverlay — Sprint-000 Foundation Plan
+
+> **Document Version:** 1.0.0
+> **Date:** 2026-08-07
+> **Status:** Approved — Locked Engineering Baseline
+> **Classification:** Internal — Engineering
+> **Author:** Lead System Designer & Engineering Architect
+> **Upstream Dependencies:**
+> - batmanoverlay PRD v1.0.0 (LOCKED, APPROVED)
+> - batmanoverlay SAD v1.0.0 (LOCKED, APPROVED)
+> - batmanoverlay TDS v1.0.0 (LOCKED, APPROVED)
+
+---
+
+## Document Control
+
+| Field | Value |
+|---|---|
+| Product Name | batmanoverlay |
+| Document Type | Sprint-000 Engineering Foundation Plan |
+| Upstream Reference | PRD v1.0.0, SAD v1.0.0, TDS v1.0.0 |
+| Target Audience | Engineering Team, Tech Leads, DevOps, QA Lead |
+| Primary Goal | Establish a production-grade development foundation, tooling, CI/CD, standards, and workflow before feature implementation |
+
+> [!IMPORTANT]
+> No feature implementation code may be merged into `main` until all 20 deliverables of Sprint-000 are implemented, tested, and accepted against the Sprint Acceptance Criteria (§19).
+
+---
+
+## Table of Contents
+
+1. [Repository Structure](#1-repository-structure)
+2. [Git Branching Strategy](#2-git-branching-strategy)
+3. [Development Workflow](#3-development-workflow)
+4. [Coding Standards](#4-coding-standards)
+5. [Dependency Management](#5-dependency-management)
+6. [Build System](#6-build-system)
+7. [Environment Configuration](#7-environment-configuration)
+8. [Logging Framework](#8-logging-framework)
+9. [Configuration Management](#9-configuration-management)
+10. [Testing Framework](#10-testing-framework)
+11. [CI/CD Pipeline](#11-cicd-pipeline)
+12. [Packaging Strategy](#12-packaging-strategy)
+13. [Release Strategy](#13-release-strategy)
+14. [Code Review Checklist](#14-code-review-checklist)
+15. [Pull Request Template](#15-pull-request-template)
+16. [Issue Templates](#16-issue-templates)
+17. [Development Milestones](#17-development-milestones)
+18. [Sprint Backlog](#18-sprint-backlog)
+19. [Sprint Acceptance Criteria](#19-sprint-acceptance-criteria)
+20. [Definition of Done](#20-definition-of-done)
+
+---
+
+# 1. Repository Structure
+
+## 1.1 Complete Directory Layout
+
+```
+batmanoverlay/
+├── .github/
+│   ├── ISSUE_TEMPLATE/
+│   │   ├── bug_report.md
+│   │   └── feature_request.md
+│   ├── workflows/
+│   │   ├── ci.yml
+│   │   └── release.yml
+│   ├── PULL_REQUEST_TEMPLATE.md
+│   └── CODEOWNERS
+├── .editorconfig
+├── .gitattributes
+├── .gitignore
+├── .pre-commit-config.yaml
+├── CHANGELOG.md
+├── LICENSE
+├── README.md
+├── pyproject.toml
+├── requirements-dev.txt
+├── requirements.txt
+├── resources/
+│   ├── fonts/
+│   ├── icons/
+│   ├── images/
+│   └── themes/
+│       ├── dark.qss
+│       └── light.qss
+├── scripts/
+│   ├── build.py
+│   ├── lint.py
+│   └── release.py
+├── src/
+│   ├── __init__.py
+│   ├── app.py
+│   ├── browser/
+│   │   ├── __init__.py
+│   │   ├── address_bar.py
+│   │   ├── bookmark_manager.py
+│   │   ├── browser_profile.py
+│   │   ├── browser_widget.py
+│   │   ├── context_menu.py
+│   │   ├── download_manager.py
+│   │   ├── history_manager.py
+│   │   ├── navigation_manager.py
+│   │   └── tab_manager.py
+│   ├── clipboard/
+│   │   ├── __init__.py
+│   │   ├── category_manager.py
+│   │   ├── clipboard_manager.py
+│   │   ├── clipboard_store.py
+│   │   └── clipboard_widget.py
+│   ├── constants.py
+│   ├── core/
+│   │   ├── __init__.py
+│   │   ├── accessibility_manager.py
+│   │   ├── config_manager.py
+│   │   ├── events.py
+│   │   ├── exceptions.py
+│   │   ├── hotkey_manager.py
+│   │   ├── logger.py
+│   │   ├── notification_manager.py
+│   │   ├── performance_monitor.py
+│   │   ├── protocols.py
+│   │   ├── search_engine.py
+│   │   ├── session_manager.py
+│   │   ├── theme_manager.py
+│   │   ├── update_manager.py
+│   │   └── workspace_manager.py
+│   ├── main.py
+│   ├── models/
+│   │   ├── __init__.py
+│   │   ├── bookmark.py
+│   │   ├── clipboard_entry.py
+│   │   ├── hotkey.py
+│   │   ├── notification.py
+│   │   ├── search_result.py
+│   │   ├── session.py
+│   │   ├── settings.py
+│   │   ├── typing_job.py
+│   │   └── workspace.py
+│   ├── platform/
+│   │   ├── __init__.py
+│   │   ├── hotkey_registry.py
+│   │   ├── input_simulator.py
+│   │   ├── system_info.py
+│   │   └── win_api.py
+│   ├── storage/
+│   │   ├── __init__.py
+│   │   ├── database.py
+│   │   ├── file_utils.py
+│   │   ├── json_store.py
+│   │   └── migrations/
+│   │       ├── __init__.py
+│   │       ├── runner.py
+│   │       ├── v001_initial.py
+│   │       └── v002_history_fts.py
+│   ├── typing/
+│   │   ├── __init__.py
+│   │   ├── speed_controller.py
+│   │   ├── typing_engine.py
+│   │   ├── typing_queue.py
+│   │   └── typing_widget.py
+│   ├── ui/
+│   │   ├── __init__.py
+│   │   ├── dialogs.py
+│   │   ├── icons.py
+│   │   ├── main_window.py
+│   │   ├── search_dialog.py
+│   │   ├── settings_panel.py
+│   │   ├── sidebar.py
+│   │   ├── splash_screen.py
+│   │   ├── status_bar.py
+│   │   ├── title_bar.py
+│   │   ├── toast.py
+│   │   └── workspace_selector.py
+│   └── version.py
+└── tests/
+    ├── conftest.py
+    ├── fixtures/
+    │   ├── sample_entries.json
+    │   └── sample_workspace.bmw
+    ├── integration/
+    │   ├── test_browser_clipboard.py
+    │   ├── test_clipboard_typing_flow.py
+    │   ├── test_session_recovery.py
+    │   ├── test_settings_propagation.py
+    │   └── test_workspace_lifecycle.py
+    ├── performance/
+    │   ├── test_clipboard_search.py
+    │   ├── test_memory_usage.py
+    │   ├── test_startup_time.py
+    │   └── test_typing_throughput.py
+    ├── ui/
+    │   ├── test_clipboard_widget.py
+    │   ├── test_main_window.py
+    │   ├── test_settings_panel.py
+    │   ├── test_theme_switching.py
+    │   └── test_typing_widget.py
+    └── unit/
+        ├── test_clipboard_manager.py
+        ├── test_clipboard_store.py
+        ├── test_config_manager.py
+        ├── test_database.py
+        ├── test_hotkey_manager.py
+        ├── test_json_store.py
+        ├── test_models.py
+        ├── test_navigation_manager.py
+        ├── test_search_engine.py
+        ├── test_session_manager.py
+        ├── test_speed_controller.py
+        ├── test_typing_engine.py
+        ├── test_typing_queue.py
+        ├── test_validators.py
+        └── test_workspace_manager.py
+```
+
+## 1.2 Configuration Metadata Files
+
+### `.gitignore`
+
+```gitignore
+# Byte-compiled / optimized files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py.cover
+.hypothesis/
+.pytest_cache/
+pytestdebug.log
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
+*.log
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# ruff / mypy
+.mypy_cache/
+.ruff_cache/
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Project Runtime Data Directory (CRITICAL: Must NEVER be committed)
+data/
+data/*
+
+# OS specific
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+```
+
+### `.gitattributes`
+
+```gitattributes
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Source files use LF
+*.py text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.qss text eol=lf
+*.toml text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+
+# Batch files use CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary files
+*.png binary
+*.ico binary
+*.ttf binary
+*.woff2 binary
+*.bmw binary
+```
+
+### `.editorconfig`
+
+```ini
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{json,yaml,yml,md,qss,toml}]
+indent_size = 2
+
+[*.{bat,cmd}]
+end_of_line = crlf
+```
+
+---
+
+# 2. Git Branching Strategy
+
+## 2.1 Strategy Model
+
+`batmanoverlay` utilizes a **Trunk-Based Development** model with short-lived feature branches and strict Pull Request (PR) validation.
+
+```
+main (protected) ───────────●──────────────────●─────────────●──────── (v1.0.0)
+                             \                /             /
+feature/clp-fts               └───●───────●──┘             /
+                                   (PR #12)               /
+fix/hotkey-conflict                                └─●──●┘
+                                                      (PR #15)
+```
+
+## 2.2 Branch Naming Conventions
+
+All branch names MUST follow the format: `<type>/<issue-id>-<short-description>`
+
+| Type | Purpose | Example |
+|---|---|---|
+| `feature/` | New functional capability | `feature/42-clipboard-fts` |
+| `fix/` | Bug fix | `fix/88-hotkey-conflict` |
+| `chore/` | Maintenance, dependencies, tooling | `chore/101-update-deps` |
+| `docs/` | Documentation changes | `docs/15-readme-update` |
+| `perf/` | Performance optimization | `perf/63-fts-query-speed` |
+| `refactor/` | Code refactoring without behavioral changes | `refactor/31-json-store` |
+
+## 2.3 Commit Message Standard (Conventional Commits)
+
+Commit messages MUST strictly follow [Conventional Commits 1.0.0](https://www.conventionalcommits.org/):
+
+```
+<type>(<scope>): <short description>
+
+[optional body]
+
+[optional footer(s)]
+```
+
+### Allowed Types
+
+- `feat`: A new feature (maps to minor version bump)
+- `fix`: A bug fix (maps to patch version bump)
+- `docs`: Documentation only changes
+- `style`: Formatting, missing semi colons, etc. (no code change)
+- `refactor`: Refactoring production code
+- `perf`: Code change that improves performance
+- `test`: Adding or correcting tests
+- `chore`: Updating build tasks, package manager configs, etc.
+
+### Allowed Scopes
+
+`core`, `browser`, `clipboard`, `typing`, `ui`, `storage`, `platform`, `models`, `deps`, `ci`
+
+### Commit Message Examples
+
+```git
+feat(clipboard): implement FTS5 search ranking in ClipboardStore
+
+Closes #42
+```
+
+```git
+fix(typing): prevent worker thread deadlock on target window loss
+
+Fixes #88
+```
+
+## 2.4 Branch Protection Rules on `main`
+
+- **Require a pull request before merging**
+  - Require at least 1 approving review from Code Owners
+  - Dismiss stale pull request approvals when new commits are pushed
+- **Require status checks to pass before merging**
+  - `CI / Lint & Type Check (ruff, mypy)`
+  - `CI / Unit Tests (pytest)`
+  - `CI / Architecture Boundaries (import-linter)`
+  - `CI / Security Audit (pip-audit)`
+- **Require branch to be up to date before merging**
+- **Require linear history** (Squash and merge or Rebase and merge)
+- **Do not allow bypassing the above settings**
+
+---
+
+# 3. Development Workflow
+
+## 3.1 Developer Environment Setup Guide
+
+Follow these exact steps to prepare a local Windows environment for `batmanoverlay` development:
+
+```powershell
+# 1. Clone repository
+git clone https://github.com/batmanoverlay/batmanoverlay.git
+cd batmanoverlay
+
+# 2. Verify Python version (MUST be 3.11+)
+python --version  # Output: Python 3.11.x or 3.12.x
+
+# 3. Create virtual environment
+python -m venv .venv
+
+# 4. Activate virtual environment
+.\.venv\Scripts\Activate.ps1
+
+# 5. Upgrade core packaging tools
+python -m pip install --upgrade pip setuptools wheel
+
+# 6. Install dependencies
+pip install -r requirements.txt
+pip install -r requirements-dev.txt
+
+# 7. Install pre-commit hooks
+pre-commit install
+
+# 8. Verify pre-commit installation
+pre-commit run --all-files
+```
+
+## 3.2 Daily Local Developer Loop
+
+```
+1. Pull latest main:        git checkout main && git pull
+2. Create feature branch:    git checkout -b feature/123-description
+3. Write test & code:       (Iterative TDD loop)
+4. Run fast linter/tests:   pytest tests/unit/
+5. Run full local gate:     python scripts/lint.py
+6. Commit changes:          git commit -m "feat(scope): concise description"
+7. Push branch:             git push -u origin feature/123-description
+8. Open PR on GitHub:       Fill PR template checklist
+```
+
+---
+
+# 4. Coding Standards
+
+## 4.1 PyProject Configuration (`pyproject.toml`)
+
+```toml
+[build-system]
+requires = ["setuptools>=68.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "batmanoverlay"
+version = "1.0.0"
+description = "Portable Windows Productivity & Presentation Assistant"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "batmanoverlay Core Team", email = "engineering@batmanoverlay.com"}
+]
+dependencies = [
+    "PySide6==6.7.0",
+    "pydantic==2.7.0",
+    "loguru==0.7.2",
+    "psutil==5.9.8",
+    "pywin32==306; sys_platform == 'win32'",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.1.1",
+    "pytest-qt==4.4.0",
+    "pytest-cov==5.0.0",
+    "pytest-benchmark==4.0.0",
+    "ruff==0.4.1",
+    "mypy==1.9.0",
+    "import-linter==2.0",
+    "pip-audit==2.7.2",
+    "pyinstaller==6.5.0",
+    "pre-commit==3.7.0",
+]
+
+[tool.ruff]
+line-length = 99
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # Pyflakes
+    "I",   # isort
+    "C90", # mccabe complexity
+    "N",   # pep8-naming
+    "UP",  # pyupgrade
+    "YTT", # sys.version checks
+    "ASYNC", # async checks
+    "B",   # flake8-bugbear
+    "A",   # flake8-builtins
+    "C4",  # flake8-comprehensions
+    "T10", # flake8-debugger
+    "EXE", # flake8-executable
+    "FA",  # flake8-future-annotations
+    "ICN", # flake8-import-conventions
+    "PT",  # flake8-pytest-style
+    "Q",   # flake8-quotes
+    "RET", # flake8-return
+    "SIM", # flake8-simplify
+    "ARG", # flake8-unused-arguments
+    "PTH", # flake8-use-pathlib
+    "RUF", # Ruff-specific rules
+]
+ignore = [
+    "A003", # Class attribute is shadowing a python builtin
+]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.isort]
+known-first-party = ["src"]
+combine-as-imports = true
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+
+[[tool.mypy.overrides]]
+module = [
+    "PySide6.*",
+    "win32api",
+    "win32con",
+    "win32gui",
+    "win32process",
+    "psutil",
+]
+ignore_missing_imports = true
+
+[tool.importlinter]
+root_package = "src"
+
+[[tool.importlinter.contracts]]
+name = "Layered architecture enforcement"
+type = "layers"
+layers = [
+    "ui",
+    "core",
+    "browser | clipboard | typing",
+    "storage",
+    "platform",
+    "models"
+]
+
+[[tool.importlinter.contracts]]
+name = "Domain module independence"
+type = "independence"
+modules = [
+    "src.browser",
+    "src.clipboard",
+    "src.typing"
+]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short --strict-markers"
+markers = [
+    "unit: Quick unit tests",
+    "integration: Multi-module integration tests",
+    "ui: PySide6 widget tests requiring qtbot",
+    "performance: Benchmarks and performance tests",
+]
+
+[tool.coverage.run]
+source = ["src"]
+omit = [
+    "src/platform/win_api.py",
+]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]
+```
+
+## 4.2 Local Pre-Commit Configuration (`.pre-commit-config.yaml`)
+
+```yaml
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+      - id: check-case-conflict
+      - id: check-merge-conflict
+      - id: no-commit-to-branch
+        args: ['--branch', 'main']
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.4.1
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy type check
+        entry: mypy src
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      - id: import-linter
+        name: import-linter boundary check
+        entry: lint-imports
+        language: system
+        pass_filenames: false
+```
+
+---
+
+# 5. Dependency Management
+
+## 5.1 Production Dependencies (`requirements.txt`)
+
+```text
+# Locked Production Dependencies for batmanoverlay v1.0.0
+# Generated & verified for Python 3.11 / Windows
+PySide6==6.7.0
+pydantic==2.7.0
+loguru==0.7.2
+psutil==5.9.8
+pywin32==306
+```
+
+## 5.2 Development Dependencies (`requirements-dev.txt`)
+
+```text
+# Development, Testing, and Build Tools
+-r requirements.txt
+
+pytest==8.1.1
+pytest-qt==4.4.0
+pytest-cov==5.0.0
+pytest-benchmark==4.0.0
+ruff==0.4.1
+mypy==1.9.0
+import-linter==2.0
+pip-audit==2.7.2
+pyinstaller==6.5.0
+pre-commit==3.7.0
+```
+
+## 5.3 Dependency Audit Policy
+
+- **No Unpinned Dependencies**: All production and dev dependencies MUST be pinned to exact versions (`==x.y.z`).
+- **Security Audits**: Automated `pip-audit` runs on every CI pipeline. Any vulnerability with CVSS $\ge 7.0$ blocks merging immediately.
+
+---
+
+# 6. Build System
+
+## 6.1 PyInstaller Specification / Script (`scripts/build.py`)
+
+```python
+"""Build script for packaging batmanoverlay into a portable Windows executable."""
+
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT_DIR = Path(__file__).parent.parent
+DIST_DIR = ROOT_DIR / "dist"
+BUILD_DIR = ROOT_DIR / "build"
+SRC_DIR = ROOT_DIR / "src"
+RESOURCES_DIR = ROOT_DIR / "resources"
+
+
+def clean() -> None:
+    """Clean existing build artifacts."""
+    print("Cleaning build directories...")
+    if DIST_DIR.exists():
+        shutil.rmtree(DIST_DIR)
+    if BUILD_DIR.exists():
+        shutil.rmtree(BUILD_DIR)
+
+
+def run_pyinstaller() -> None:
+    """Invoke PyInstaller build."""
+    print("Executing PyInstaller build...")
+    cmd = [
+        sys.executable,
+        "-m",
+        "PyInstaller",
+        "--noconfirm",
+        "--onedir",
+        "--windowed",
+        "--name=batmanoverlay",
+        f"--icon={RESOURCES_DIR / 'icons' / 'app.ico'}",
+        f"--add-data={RESOURCES_DIR};resources",
+        "--paths=src",
+        str(SRC_DIR / "main.py"),
+    ]
+    result = subprocess.run(cmd, cwd=ROOT_DIR, check=False)
+    if result.returncode != 0:
+        print("Build failed!")
+        sys.exit(1)
+
+
+def assemble_portable_package() -> None:
+    """Assemble final portable directory layout."""
+    print("Assembling portable package...")
+    target_dir = DIST_DIR / "batmanoverlay"
+
+    # Create empty data template structure
+    data_dir = target_dir / "data"
+    (data_dir / "config").mkdir(parents=True, exist_ok=True)
+    (data_dir / "workspaces" / "default").mkdir(parents=True, exist_ok=True)
+    (data_dir / "sessions").mkdir(parents=True, exist_ok=True)
+    (data_dir / "logs").mkdir(parents=True, exist_ok=True)
+
+    # Copy LICENSE and README
+    shutil.copy(ROOT_DIR / "LICENSE", target_dir)
+    shutil.copy(ROOT_DIR / "README.md", target_dir)
+
+    print(f"Portable build complete: {target_dir}")
+
+
+def main() -> None:
+    clean()
+    run_pyinstaller()
+    assemble_portable_package()
+
+
+if __name__ == "__main__":
+    main()
+```
+
+---
+
+# 7. Environment Configuration
+
+## 7.1 Runtime Portability Configuration
+
+`batmanoverlay` strictly operates in **Portable Mode**. No registry entries are created, and no files are written to `%APPDATA%` or `%LOCALAPPDATA%`.
+
+```python
+# Boot isolation logic in src/app.py
+def get_portable_data_dir() -> Path:
+    """Determine the portable data directory relative to executable."""
+    if getattr(sys, "frozen", False):
+        # Running as PyInstaller executable
+        base_dir = Path(sys.executable).parent
+    else:
+        # Running from source
+        base_dir = Path(__file__).parent.parent
+
+    data_dir = base_dir / "data"
+    data_dir.mkdir(exist_ok=True)
+    return data_dir
+```
+
+---
+
+# 8. Logging Framework
+
+## 8.1 Logging Setup (`src/core/logger.py`)
+
+```python
+"""Logging infrastructure for batmanoverlay using Loguru."""
+
+import sys
+from pathlib import Path
+from loguru import logger
+
+from src.constants import LOG_FILE, LOG_FORMAT, LOG_MAX_SIZE_BYTES, LOG_RETENTION_COUNT
+
+
+def privacy_redaction_filter(record: dict) -> bool:
+    """Filter stripping sensitive fields from context."""
+    sensitive_keys = {"text", "password", "token", "cookie", "session_id", "credential"}
+    extra = record.get("extra", {})
+    for key in list(extra.keys()):
+        if key.lower() in sensitive_keys:
+            extra[key] = "[REDACTED]"
+    return True
+
+
+def setup_logging(data_dir: Path, debug: bool = False) -> None:
+    """Configure loguru logging sinks."""
+    logger.remove()  # Remove default sink
+
+    log_level = "DEBUG" if debug else "INFO"
+    log_dir = data_dir / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file_path = log_dir / LOG_FILE
+
+    # File Sink (Rotation + Retention + Compression)
+    logger.add(
+        sink=log_file_path,
+        level=log_level,
+        format=LOG_FORMAT,
+        rotation=LOG_MAX_SIZE_BYTES,
+        retention=LOG_RETENTION_COUNT,
+        compression="gz",
+        filter=privacy_redaction_filter,
+        enqueue=True,  # Thread-safe async logging
+        encoding="utf-8",
+    )
+
+    # Console Sink (Development only)
+    if debug:
+        logger.add(
+            sink=sys.stderr,
+            level="DEBUG",
+            format=LOG_FORMAT,
+            filter=privacy_redaction_filter,
+        )
+
+    logger.info(f"Logging initialized at level {log_level}")
+```
+
+---
+
+# 9. Configuration Management
+
+## 9.1 Configuration Manager Baseline (`src/core/config_manager.py`)
+
+```python
+"""Central Configuration Manager for batmanoverlay."""
+
+from pathlib import Path
+from typing import Any
+from PySide6.QtCore import QObject, Signal
+
+from src.constants import CONFIG_DIR, SETTINGS_FILE
+from src.models.settings import AppSettings
+from src.storage.json_store import JsonStore
+
+
+class ConfigManager(QObject):
+    """Manages application settings loading, persistence, and change notification."""
+
+    config_changed = Signal(str, object)  # (key_path, new_value)
+
+    def __init__(self, data_dir: Path) -> None:
+        super().__init__()
+        self._config_dir = data_dir / CONFIG_DIR
+        self._config_dir.mkdir(parents=True, exist_ok=True)
+        self._settings_path = self._config_dir / SETTINGS_FILE
+        self._json_store = JsonStore()
+        self._settings = self._load_settings()
+
+    def _load_settings(self) -> AppSettings:
+        if not self._settings_path.exists():
+            default_settings = AppSettings()
+            self._json_store.write_atomic(self._settings_path, default_settings)
+            return default_settings
+
+        try:
+            raw_data = self._json_store.read(self._settings_path)
+            return AppSettings.model_validate(raw_data)
+        except Exception:
+            # Backup corrupted file and regenerate defaults
+            backup_path = self._settings_path.with_suffix(".json.bak")
+            if self._settings_path.exists():
+                self._settings_path.rename(backup_path)
+            default_settings = AppSettings()
+            self._json_store.write_atomic(self._settings_path, default_settings)
+            return default_settings
+
+    def get(self, key_path: str, default: Any = None) -> Any:
+        """Get setting using dot-notation path (e.g., 'typing.default_speed')."""
+        parts = key_path.split(".")
+        curr: Any = self._settings
+        for part in parts:
+            if hasattr(curr, part):
+                curr = getattr(curr, part)
+            elif isinstance(curr, dict) and part in curr:
+                curr = curr[part]
+            else:
+                return default
+        return curr
+
+    def settings(self) -> AppSettings:
+        return self._settings
+```
+
+---
+
+# 10. Testing Framework
+
+## 10.1 `tests/conftest.py` Fixtures Setup
+
+```python
+"""Global pytest fixtures for batmanoverlay."""
+
+from pathlib import Path
+from typing import Generator
+import pytest
+from PySide6.QtWidgets import QApplication
+
+from src.models.settings import AppSettings
+
+
+@pytest.fixture(scope="session")
+def qapp() -> Generator[QApplication, None, None]:
+    """Provide QApplication instance for Qt tests."""
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication([])
+    yield app
+
+
+@pytest.fixture
+def tmp_data_dir(tmp_path: Path) -> Path:
+    """Provide temporary data directory structure."""
+    data_dir = tmp_path / "data"
+    (data_dir / "config").mkdir(parents=True)
+    (data_dir / "workspaces" / "default").mkdir(parents=True)
+    (data_dir / "sessions").mkdir(parents=True)
+    (data_dir / "logs").mkdir(parents=True)
+    return data_dir
+
+
+@pytest.fixture
+def default_settings() -> AppSettings:
+    return AppSettings()
+```
+
+---
+
+# 11. CI/CD Pipeline
+
+## 11.1 Main Continuous Integration Workflow (`.github/workflows/ci.yml`)
+
+```yaml
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  lint-and-typecheck:
+    name: Lint, Format & Type Check
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run Ruff Linter
+        run: ruff check src tests
+
+      - name: Run Ruff Formatter Check
+        run: ruff format --check src tests
+
+      - name: Run Mypy Type Checker
+        run: mypy src
+
+      - name: Check Architecture Boundaries
+        run: lint-imports
+
+      - name: Run Security Audit
+        run: pip-audit
+
+  test:
+    name: Unit & Integration Tests
+    needs: lint-and-typecheck
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run pytest with Coverage
+        run: pytest --cov=src --cov-report=xml --cov-report=term
+
+      - name: Verify Minimum Coverage Budget (80%)
+        run: python -m coverage report --fail-under=80
+```
+
+---
+
+# 12. Packaging Strategy
+
+The output of the build system is a single self-contained portable folder: `batmanoverlay/`.
+
+```
+batmanoverlay-v1.0.0-windows-x64.zip
+└── batmanoverlay/
+    ├── batmanoverlay.exe           # Main Executable
+    ├── QtWebEngineProcess.exe      # Qt Renderer Helper
+    ├── resources/                  # Bundled Fonts, Icons, Themes
+    │   ├── icons/
+    │   └── themes/
+    ├── data/                       # Portable Data Root (Pre-initialized empty structure)
+    │   ├── config/
+    │   ├── workspaces/
+    │   │   └── default/
+    │   ├── sessions/
+    │   └── logs/
+    ├── LICENSE
+    └── README.md
+```
+
+---
+
+# 13. Release Strategy
+
+## 13.1 Versioning
+
+Version numbers follow **Semantic Versioning 2.0.0** (`MAJOR.MINOR.PATCH`):
+- `MAJOR`: Incompatible architectural changes.
+- `MINOR`: New features added in a backward-compatible manner.
+- `PATCH`: Backward-compatible bug fixes.
+
+## 13.2 Automated Release Workflow (`.github/workflows/release.yml`)
+
+```yaml
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-release:
+    name: Build Portable Release Package
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run Build Script
+        run: python scripts/build.py
+
+      - name: Compress Release Archive
+        shell: powershell
+        run: |
+          Compress-Archive -Path dist/batmanoverlay -DestinationPath dist/batmanoverlay-${{ github.ref_name }}-windows-x64.zip
+
+      - name: Generate SHA-256 Checksum
+        shell: powershell
+        run: |
+          Get-FileHash -Path dist/batmanoverlay-${{ github.ref_name }}-windows-x64.zip -Algorithm SHA256 | Format-List > dist/checksums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/batmanoverlay-${{ github.ref_name }}-windows-x64.zip
+            dist/checksums.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
+---
+
+# 14. Code Review Checklist
+
+When reviewing any Pull Request for `batmanoverlay`, reviewers MUST verify the following:
+
+- [ ] **Architecture Alignment**: The code strictly follows the 5-layer architecture (`ui` $\rightarrow$ `core` $\rightarrow$ `browser`/`clipboard`/`typing` $\rightarrow$ `storage` $\rightarrow$ `platform` $\rightarrow$ `models`).
+- [ ] **Type Safety**: `mypy --strict` passes with 0 errors. All parameters and return types are explicitly annotated.
+- [ ] **Test Coverage**: New logic includes unit tests. Coverage does not drop below 80%.
+- [ ] **No Admin Privileges**: No API calls require administrative elevation or write to registry/system directories.
+- [ ] **Portability Integrity**: All file paths use `Path` relative to `get_portable_data_dir()`. No `%APPDATA%` references.
+- [ ] **Privacy Preservation**: Log statements do NOT output clipboard content, URLs, typed text, or sensitive data.
+
+---
+
+# 15. Pull Request Template
+
+File location: `.github/PULL_REQUEST_TEMPLATE.md`
+
+```markdown
+## Description
+<!-- Provide a clear summary of the changes made. -->
+
+## Associated Issue
+Closes #<!-- Issue number -->
+
+## Type of Change
+- [ ] Bug fix (non-breaking change fixing an issue)
+- [ ] New feature (non-breaking change adding functionality)
+- [ ] Breaking change (fix or feature causing existing features to change)
+- [ ] Documentation update / Tooling
+
+## Checklist
+- [ ] My code follows the project's coding style guidelines (`ruff format`).
+- [ ] I have performed a self-review of my code.
+- [ ] `mypy --strict` passes locally with 0 errors.
+- [ ] `lint-imports` passes without architectural boundary violations.
+- [ ] I have added unit tests proving my fix/feature works.
+- [ ] Unit test coverage is $\ge 80\%$.
+- [ ] All new and existing tests pass (`pytest`).
+- [ ] No log statements output PII or user clipboard text.
+```
+
+---
+
+# 16. Issue Templates
+
+## 16.1 Bug Report Template (`.github/ISSUE_TEMPLATE/bug_report.md`)
+
+```markdown
+---
+name: Bug Report
+about: Create a report to help us improve batmanoverlay
+title: '[BUG] '
+labels: bug
+assignees: ''
+---
+
+**Describe the bug**
+A clear and concise description of what the bug is.
+
+**To Reproduce**
+Steps to reproduce the behavior:
+1. Go to '...'
+2. Click on '...'
+3. Scroll down to '...'
+4. See error
+
+**Expected behavior**
+A clear description of what you expected to happen.
+
+**Environment:**
+ - OS: [e.g. Windows 11 23H2 / Windows 10 21H2]
+ - Application Version: [e.g. 1.0.0]
+
+**Additional Context / Logs**
+Attach relevant non-sensitive logs from `data/logs/batmanoverlay.log`.
+```
+
+## 16.2 Feature Request Template (`.github/ISSUE_TEMPLATE/feature_request.md`)
+
+```markdown
+---
+name: Feature Request
+about: Suggest an idea for batmanoverlay
+title: '[FEAT] '
+labels: enhancement
+assignees: ''
+---
+
+**Is your feature request related to a problem? Please describe.**
+A clear and concise description of what the problem is.
+
+**Describe the solution you'd like**
+A clear description of what you want to happen.
+
+**Alignment with PRD Non-Goals**
+- [ ] Does NOT attempt to hide the application from screen capture.
+- [ ] Does NOT attempt to bypass proctoring, anti-cheat, or OS security.
+- [ ] Does NOT require admin privileges.
+```
+
+---
+
+# 17. Development Milestones
+
+```
+Sprint-000 ──► Phase 1 ──────► Phase 2 ──────► Phase 3 ──────► Phase 4 ──────► Phase 5 ──────► Phase 6
+[Foundation]  [Core Platform] [Core Services] [Domain Modules][UI Presentation][Integration]  [v1.0 Release]
+(Weeks 0)     (Weeks 1-3)     (Weeks 4-6)     (Weeks 7-10)   (Weeks 11-13)   (Weeks 14-15)  (Week 16)
+```
+
+---
+
+# 18. Sprint Backlog (Sprint-000 Task Inventory)
+
+| Task ID | Component | Task Description | Est. Points | Assignee |
+|---|---|---|---|---|
+| S0-01 | Repo | Initialize directory structure & add `.gitignore`, `.gitattributes`, `.editorconfig` | 1 | Tech Lead |
+| S0-02 | Tooling | Configure `pyproject.toml` (`ruff`, `mypy`, `import-linter`, `pytest`) | 2 | DevOps |
+| S0-03 | Deps | Create and verify `requirements.txt` and `requirements-dev.txt` | 1 | DevOps |
+| S0-04 | Pre-Commit | Setup `.pre-commit-config.yaml` and test local hooks | 1 | Developer |
+| S0-05 | Build | Implement `scripts/build.py` PyInstaller assembly script | 3 | DevOps |
+| S0-06 | Logging | Implement `src/core/logger.py` Loguru framework + redaction filter | 2 | Core Dev |
+| S0-07 | Config | Implement `src/core/config_manager.py` bootstrap | 2 | Core Dev |
+| S0-08 | CI Pipeline | Write `.github/workflows/ci.yml` GitHub Actions pipeline | 3 | DevOps |
+| S0-09 | Release CI | Write `.github/workflows/release.yml` GitHub Actions release pipeline | 2 | DevOps |
+| S0-10 | Templates | Create PR template, Issue templates, and CODEOWNERS | 1 | Tech Lead |
+
+---
+
+# 19. Sprint Acceptance Criteria
+
+Sprint-000 is accepted ONLY when all of the following conditions are met:
+
+1. [ ] Repository skeleton contains all directories defined in §1.1.
+2. [ ] `pip install -r requirements-dev.txt` completes cleanly on a clean Windows Python 3.11 environment.
+3. [ ] `pre-commit run --all-files` passes cleanly with 0 errors.
+4. [ ] `ruff check src tests` and `ruff format --check src tests` pass cleanly.
+5. [ ] `mypy src` passes cleanly with 0 type errors under strict mode.
+6. [ ] `lint-imports` passes cleanly with 0 architecture boundary violations.
+7. [ ] `pytest` executes and reports 100% passing tests.
+8. [ ] `python scripts/build.py` successfully generates a runnable, standalone portable package in `dist/batmanoverlay`.
+9. [ ] GitHub Actions CI pipeline runs and passes on a push to `main`.
+10. [ ] `src/core/logger.py` correctly redacts sensitive fields during unit tests.
+
+---
+
+# 20. Definition of Done
+
+## 20.1 DoD for Individual User Stories / Tasks
+- Code strictly follows repository coding standards.
+- Type annotations complete (`mypy --strict` passes).
+- Unit tests written and passing.
+- No layer or domain boundary violations (`import-linter` passes).
+- Code reviewed and approved by at least 1 Code Owner.
+
+## 20.2 DoD for Sprint-000 (Foundation Complete)
+- All 10 backlog tasks in §18 completed and closed.
+- All 10 Sprint Acceptance Criteria in §19 verified.
+- `main` branch protected with CI enforcement enabled.
+- Engineering team ready to execute Phase 1 development.
+
+---
+
+*End of Sprint-000 Foundation Plan*
+
+**Document Status:** Approved — Locked Engineering Baseline
+**Next Action:** Execute Sprint-000 Backlog tasks S0-01 through S0-10.

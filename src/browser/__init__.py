@@ -1,0 +1,1 @@
+"""Browser domain package shell."""

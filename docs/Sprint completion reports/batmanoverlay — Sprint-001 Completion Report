@@ -1,0 +1,165 @@
+# batmanoverlay — Sprint-001 Completion Report
+
+> **Document Version:** 1.0.0
+> **Date:** 2026-08-07
+> **Status:** Completed — Application Shell Engine Baseline Verified
+> **Classification:** Internal — Engineering
+> **Author:** Lead System Designer & Lead Software Engineer
+> **Upstream Dependencies:**
+> - batmanoverlay PRD v1.0.0 (LOCKED, APPROVED)
+> - batmanoverlay SAD v1.0.0 (LOCKED, APPROVED)
+> - batmanoverlay TDS v1.0.0 (LOCKED, APPROVED)
+> - batmanoverlay Sprint-000 Completion Report v1.0.0 (LOCKED, APPROVED)
+
+---
+
+## Executive Summary
+
+Sprint-001 has been **100% completed, validated, and verified** against all application shell requirements. The overlay window shell, custom frameless title bar, collapsed navigation sidebar, status bar, floating toast system, theme subsystem, modal error/dialog engine, settings panel, and global exception hooks have been implemented according to the locked SAD and LLD specifications. Zero domain feature code (Browser, Clipboard, Typing Engine, Workspace, Smart Copy) was introduced ahead of schedule.
+
+---
+
+## 1. Deliverables Summary & Detailed Task Reports
+
+### Task 1.1: Custom TitleBar & Frameless Window Controls
+- **Objective:** Implement frameless custom title bar widget with dragging, collapse, pin/unpin, opacity slider, search trigger, and window control buttons.
+- **Files Created:** `src/ui/title_bar.py`, `src/ui/icons.py`.
+- **Files Modified:** None.
+- **Design Decisions:**
+  - Standardized height to 36px.
+  - Implemented mouse event handlers (`mousePressEvent`, `mouseMoveEvent`) for smooth dragging of the frameless window.
+  - Added popover menu with interactive slider for real-time opacity adjustment (20% to 100%).
+  - Vector fallback generator in `IconManager` to render crisp controls without requiring external SVG assets.
+- **Validation Performed:** `tests/unit/test_title_bar.py` verified toggle signals and opacity events.
+- **Build Status:** PASSED.
+- **Test Results:** 100% pass.
+
+### Task 1.2: Left Panel Navigation Sidebar
+- **Objective:** Implement collapsed 48px left navigation sidebar with active tab indicator styling.
+- **Files Created:** `src/ui/sidebar.py`.
+- **Files Modified:** None.
+- **Design Decisions:**
+  - Fixed width of 48px in collapsed state.
+  - Interactive sidebar buttons for Browser, Clipboard, Typing, Bookmarks, and Settings.
+  - Custom QSS property `active="true"` used for dynamic accent highlighting of current panel.
+- **Validation Performed:** `tests/unit/test_sidebar.py` verified panel selection signals.
+- **Build Status:** PASSED.
+- **Test Results:** 100% pass.
+
+### Task 1.3: Bottom Status Bar
+- **Objective:** Implement bottom status bar (24px height) displaying status messages, status indicator dot, and version label.
+- **Files Created:** `src/ui/status_bar.py`.
+- **Files Modified:** None.
+- **Design Decisions:**
+  - Subscribes to `AppSignals.status_message` for reactive updates across components.
+  - Visual status dot indicator (`●`) with dynamic QSS color mutation (`#A6E3A1` for normal, `#F9E2AF` for warning, `#F38BA8` for error).
+- **Validation Performed:** `tests/unit/test_status_bar.py` verified signal connectivity and message rendering.
+- **Build Status:** PASSED.
+- **Test Results:** 100% pass.
+
+### Task 1.4: Toast Notification Manager
+- **Objective:** Implement non-blocking overlay toast notifications for Info, Warning, and Error levels.
+- **Files Created:** `src/ui/toast.py`, `src/core/notification_manager.py`.
+- **Files Modified:** None.
+- **Design Decisions:**
+  - Subwindow overlay positioning floating above content at top-right/bottom-right margin.
+  - Timed auto-dismiss (5000ms for Info, 8000ms for Warning/Error) with manual close button.
+  - `NotificationManager` service created to decouple background services from UI widgets.
+- **Validation Performed:** `tests/unit/test_toast.py` verified toast creation, stacking, and dismissal.
+- **Build Status:** PASSED.
+- **Test Results:** 100% pass.
+
+### Task 1.5: Modal Dialog & Global Exception Engine
+- **Objective:** Implement reusable modal dialogs (`ConfirmDialog`, `ErrorDialog`, `RecoveryDialog`) and install global exception hook.
+- **Files Created:** `src/ui/dialogs.py`.
+- **Files Modified:** `src/app.py`.
+- **Design Decisions:**
+  - `ErrorDialog` displays error code, user message, stack trace details, and copy to clipboard button.
+  - Global `sys.excepthook` catches uncaught UI exceptions, logs critical errors to Loguru sink, and presents `ErrorDialog` without crashing the application thread.
+- **Validation Performed:** `tests/unit/test_dialogs.py` verified modal dialog instantiation and clipboard copy payload formatting.
+- **Build Status:** PASSED.
+- **Test Results:** 100% pass.
+
+### Task 1.6: Theme Subsystem (QSS Engine)
+- **Objective:** Implement `ThemeManager` supporting dark theme, light theme, system palette auto-detection, and reactive QSS loading.
+- **Files Created:** `src/core/theme_manager.py`, `resources/themes/dark.qss`, `resources/themes/light.qss`.
+- **Files Modified:** None.
+- **Design Decisions:**
+  - Dark mode designed using modern palette (`#1E1E2E`, `#181825`, `#5B8DEF`, `#CDD6F4`).
+  - Light mode designed using `#EFF1F5`, `#E6E9EF`, `#1792E8`.
+  - Re-applies global stylesheet on `QApplication` whenever `appearance.theme` setting changes.
+- **Validation Performed:** `tests/unit/test_theme_manager.py` verified theme switching, fallback stylesheet loading, and configuration reactivity.
+- **Build Status:** PASSED.
+- **Test Results:** 100% pass.
+
+### Task 1.7: Settings Panel & Form Binding
+- **Objective:** Build production settings form interface bound to `ConfigManager`.
+- **Files Created:** `src/ui/settings_panel.py`.
+- **Files Modified:** None.
+- **Design Decisions:**
+  - Grouped settings into Appearance, General, and Typing sections using QGroupBox.
+  - Real-time binding on control value changes directly updating `ConfigManager`.
+- **Validation Performed:** `tests/unit/test_settings_panel.py` verified value initialization and setting persistence.
+- **Build Status:** PASSED.
+- **Test Results:** 100% pass.
+
+### Task 1.8: Production Main Window Shell & Geometry Persistence
+- **Objective:** Assemble `MainWindow` overlay shell with custom TitleBar, Sidebar, QStackedWidget panel dock, StatusBar, ToastManager, and debounced geometry persistence.
+- **Files Created:** `src/ui/main_window.py`, `src/models/session.py`.
+- **Files Modified:** `src/ui/__init__.py`.
+- **Design Decisions:**
+  - Integrated `WindowGeometry` Pydantic model and `JsonStore` for session persistence (`geometry.json`).
+  - Implemented 200ms debounced QTimer saving position (`x`, `y`, `width`, `height`), opacity, collapsed state, and always-on-top state.
+  - Smooth collapse mode resizing height to 36px title bar and hiding content/status bar.
+- **Validation Performed:** `tests/ui/test_main_window.py` verified panel switching, opacity controls, collapse mode, and geometry restore.
+- **Build Status:** PASSED.
+- **Test Results:** 100% pass.
+
+---
+
+## 2. Architectural Compliance & Quality Gates
+
+| Quality Gate | Tool / Script | Status | Result |
+|---|---|---|---|
+| **Code Formatting** | `ruff format` | **PASSED** | 49 source files formatted cleanly |
+| **Linting** | `ruff check` | **PASSED** | 0 errors across codebase |
+| **Type Checking** | `mypy --strict` | **PASSED** | 0 errors across 35 source files |
+| **Import Boundaries** | `import-linter` | **PASSED** | 2/2 contracts kept (`ui` $\rightarrow$ `core` $\rightarrow$ `storage` $\rightarrow$ `models`) |
+| **Unit & UI Tests** | `pytest` | **PASSED** | 23 passed in 1.46 seconds |
+| **Standalone Package** | `build.py` | **PASSED** | Executable output `dist/batmanoverlay/batmanoverlay.exe --version` $\rightarrow$ `batmanoverlay 1.0.0` (Exit code: 0) |
+
+---
+
+## 3. Summary of Files Created and Modified
+
+### New Files Created (13)
+1. `src/ui/icons.py`
+2. `src/ui/title_bar.py`
+3. `src/ui/sidebar.py`
+4. `src/ui/status_bar.py`
+5. `src/ui/toast.py`
+6. `src/ui/dialogs.py`
+7. `src/ui/settings_panel.py`
+8. `src/ui/main_window.py`
+9. `src/core/theme_manager.py`
+10. `src/core/notification_manager.py`
+11. `src/models/session.py`
+12. `resources/themes/dark.qss`
+13. `resources/themes/light.qss`
+14. Unit test suite: `tests/unit/test_theme_manager.py`, `test_title_bar.py`, `test_sidebar.py`, `test_status_bar.py`, `test_toast.py`, `test_dialogs.py`, `test_settings_panel.py`, `tests/ui/test_main_window.py`.
+
+### Files Modified (5)
+1. `src/app.py` (Dependency injection container & global exception hook)
+2. `src/ui/__init__.py` (Package exports)
+3. `src/constants.py` (Added `SIDEBAR_COLLAPSED_WIDTH` and `NotificationLevel`)
+4. `scripts/build.py` (Updated PyInstaller parameters and portable structure assembly)
+5. `tests/unit/test_app_shell.py` (Updated window instantiation parameters)
+
+---
+
+## 4. Final Assessment & Next Steps
+
+Sprint-001 has been **fully executed and verified**. The application shell baseline is stable, tested, and packaged.
+
+> [!IMPORTANT]
+> As instructed, implementation will **STOP** here. Sprint-002 (Clipboard Engine & Local History Storage Implementation) will not begin until explicitly authorized by the user.

@@ -1,0 +1,109 @@
+# batmanoverlay — Sprint-002A Completion Report
+
+> **Document Version:** 1.0.0
+> **Date:** 2026-08-07
+> **Status:** Completed — Clipboard Engine Baseline Verified
+> **Classification:** Internal — Engineering
+> **Author:** Lead System Designer & Lead Software Engineer
+> **Upstream Dependencies:**
+> - batmanoverlay PRD v1.0.0 (LOCKED)
+> - batmanoverlay SAD v1.0.0 (LOCKED)
+> - batmanoverlay TDS v1.0.0 (LOCKED)
+> - batmanoverlay Sprint-001 Audit Report v1.0.0 (LOCKED, APPROVED)
+
+---
+
+## Executive Summary
+
+Sprint-002A (**Clipboard Foundation — Backend Engine**) has been **100% completed, tested, and validated**. The implementation provides a production-grade backend engine for capturing, storing, deduplicating, querying, searching, filtering, importing, and exporting clipboard content via SQLite WAL storage. Zero UI code, search panels, Smart Copy, or Typing Engine integrations were introduced ahead of schedule.
+
+All quality gates passed cleanly: **32/32 unit & UI tests passing (100%)**, **86.29% codebase test coverage**, **0 static type errors (`mypy --strict`)**, **0 linter errors (`ruff`)**, **2/2 import architecture contracts kept**, and **standalone executable packaging validated returning `batmanoverlay 1.0.0` with exit code 0**.
+
+---
+
+## 1. Summary of Deliverables & Files
+
+### New Files Created (9)
+1. `src/models/clipboard.py` — `ClipboardItem`, `ClipboardItemType`, `ClipboardBatch` domain models with auto SHA-256 content hashing & text metric calculations (`char_count`, `word_count`, `line_count`).
+2. `src/storage/sqlite_store.py` — Thread-safe `SQLiteStore` database manager with WAL journal mode, PRAGMA optimizations, and automatic SQL migration execution.
+3. `src/storage/migrations/v001_clipboard.sql` — SQL migration DDL establishing `clipboard_items` table and indices (`idx_clipboard_hash`, `idx_clipboard_timestamp`, `idx_clipboard_pinned`, `idx_clipboard_favorite`).
+4. `src/storage/clipboard_repository.py` — `ClipboardRepository` Data Access Object for CRUD operations, hash deduplication with timestamp updating, paginated queries, substring searches, capacity enforcement, and history clearing.
+5. `src/clipboard/exceptions.py` — Domain exception hierarchy (`ClipboardError`, `ClipboardStorageError`, `ClipboardExportError`).
+6. `src/clipboard/exporters.py` — `ClipboardExporter` supporting JSON import/export, CSV export, and TXT formatting contracts.
+7. `src/clipboard/protocols.py` — Runtime checkable interface contracts (`IClipboardRepository`, `IClipboardService`).
+8. `src/clipboard/monitor.py` — `ClipboardMonitor` PySide6 component capturing `QClipboard.dataChanged` events.
+9. `src/clipboard/service.py` — `ClipboardService` orchestrating ingestion, capacity enforcement, persistence, and signaling.
+10. Unit test suite: `tests/unit/test_sqlite_store.py`, `tests/unit/test_clipboard_repository.py`, `tests/unit/test_clipboard_exporters.py`, `tests/unit/test_clipboard_service.py`.
+
+### Files Modified (4)
+1. `src/models/__init__.py` — Package exports for clipboard models.
+2. `src/storage/__init__.py` — Package exports for repository & SQLite store.
+3. `src/clipboard/__init__.py` — Package exports for clipboard engine.
+4. `src/core/events.py` — Added `clipboard_item_added`, `clipboard_item_deleted`, and `clipboard_cleared` signals to `AppSignals`.
+5. `src/app.py` — Dependency injection container wiring (`SQLiteStore`, `ClipboardRepository`, `ClipboardMonitor`, `ClipboardService`).
+6. `pyproject.toml` — Layered architecture contract ordering (`browser | clipboard | typing` above `core`).
+
+---
+
+## 2. Design Decisions & Technical Architecture
+
+- **Automatic SHA-256 Hash Deduplication**: When text is copied to the clipboard, `ClipboardItem` computes a SHA-256 digest (`content_hash`). `ClipboardRepository` checks for matching hashes. If an existing entry is found, its timestamp is updated to `now` and it moves to the top of the history stack rather than cluttering storage with duplicate entries.
+- **SQLite WAL Mode & Thread Safety**: SQLite connections enforce `PRAGMA journal_mode=WAL;` and `PRAGMA synchronous=NORMAL;` with connection context management, preventing database locking and ensuring high-performance writes.
+- **Capacity Enforcement**: `ClipboardService` enforces `clipboard.max_history_items` (default 500), purging unpinned oldest entries automatically on new insertions.
+- **Decoupled Architecture**: `ClipboardService` communicates asynchronously with UI modules via `AppSignals`, preventing coupling between storage logic and presentation widgets.
+
+---
+
+## 3. Build & Test Verification Results
+
+### Unit & Integration Test Suite (`pytest`)
+- Test Command: `python -m pytest --cov=src`
+- Total Tests: **32 passed in 1.06 seconds**
+- Test Coverage: **86.29%** across all source files
+
+```
+Name                                  Stmts   Miss  Cover
+---------------------------------------------------------
+src\clipboard\__init__.py                 6      0   100%
+src\clipboard\protocols.py               20      0   100%
+src\clipboard\service.py                 66     16    76%
+src\models\clipboard.py                  32      0   100%
+src\storage\clipboard_repository.py      81      9    89%
+src\storage\sqlite_store.py              44      9    80%
+...
+TOTAL                                  1517    208    86%
+```
+
+### Quality Gates Verification
+- **Linter (`ruff check`)**: PASSED (0 errors)
+- **Formatter (`ruff format`)**: PASSED (100% formatted)
+- **Type Checker (`mypy --strict`)**: PASSED (0 type errors across 43 source files)
+- **Architecture Boundaries (`import-linter`)**: PASSED (2/2 contracts kept)
+
+### Executable Build Verification
+- Command: `python scripts/build.py`
+- Executable Location: `dist/batmanoverlay/batmanoverlay.exe`
+- Verification Command: `dist/batmanoverlay/batmanoverlay.exe --version`
+- Output: `batmanoverlay 1.0.0` (Exit code: 0)
+
+---
+
+## 4. Scope Conformance Audit
+
+- [x] **Clipboard Domain Model**: Implemented (`ClipboardItem`, `ClipboardItemType`, `ClipboardBatch`)
+- [x] **SQLite Storage & Repository**: Implemented (`SQLiteStore`, `v001_clipboard.sql`, `ClipboardRepository`)
+- [x] **Import/Export Contracts**: Implemented (`ClipboardExporter` for JSON, CSV, TXT)
+- [x] **Clipboard Events & Signals**: Implemented (`AppSignals`)
+- [x] **Clipboard Monitor & Service**: Implemented (`ClipboardMonitor`, `ClipboardService`)
+- [x] **Dependency Injection Wiring**: Implemented (`BatmanOverlayApp` in `src/app.py`)
+- [x] **Unit Tests & Test Coverage**: 32 tests passing (86.29% coverage)
+- [x] **Zero UI Leaks**: ❌ No Clipboard UI, Search Panel, Pin UI, Smart Copy, or Typing Engine code added.
+
+---
+
+## 5. Readiness Assessment for Sprint-002B
+
+Sprint-002A is **100% complete and verified**. The backend engine is ready to be consumed by Sprint-002B (Clipboard History UI & Search Panel).
+
+> [!IMPORTANT]
+> Execution has **STOPPED**. Sprint-002B (Clipboard History Panel UI) will not begin until explicitly authorized by the user.

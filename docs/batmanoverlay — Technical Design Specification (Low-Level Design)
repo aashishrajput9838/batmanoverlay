@@ -1,0 +1,1850 @@
+# batmanoverlay — Technical Design Specification (Low-Level Design)
+
+> **Document Version:** 1.0.0
+> **Date:** 2026-08-07
+> **Status:** Draft — Pending Engineering Review
+> **Classification:** Internal — Engineering
+> **Author:** Principal Software Engineer & Lead System Designer
+> **Upstream Dependencies:**
+> - batmanoverlay PRD v1.0.0 (LOCKED, APPROVED)
+> - batmanoverlay SAD v1.0.0 (LOCKED, APPROVED)
+
+---
+
+## Document Control
+
+| Field | Value |
+|---|---|
+| Product Name | batmanoverlay |
+| Document Type | Technical Design Specification (TDS / Low-Level Design) |
+| PRD Reference | batmanoverlay PRD v1.0.0, §7 (Functional Requirements) |
+| SAD Reference | batmanoverlay SAD v1.0.0, §4 (Module Breakdown) |
+| Target Audience | Implementing Engineers, QA Engineers |
+| Scope | v1.0 implementation only; future roadmap items are out of scope |
+
+> [!IMPORTANT]
+> This document defines implementation-level contracts. Developers implementing any module MUST conform to the interfaces, models, signals, enums, and error codes specified here. Deviations require a written amendment reviewed by the tech lead.
+
+---
+
+## Table of Contents
+
+1. [Coding Conventions](#1-coding-conventions)
+2. [Folder-by-Folder Implementation Plan](#2-folder-by-folder-implementation-plan)
+3. [Data Models and DTOs](#3-data-models-and-dtos)
+4. [Enums, Constants, and Configuration Objects](#4-enums-constants-and-configuration-objects)
+5. [Protocol Definitions (Interfaces)](#5-protocol-definitions-interfaces)
+6. [Signal and Event Registry](#6-signal-and-event-registry)
+7. [Exception Hierarchy and Error Codes](#7-exception-hierarchy-and-error-codes)
+8. [Database Schema and Migration Plan](#8-database-schema-and-migration-plan)
+9. [File Format Specifications](#9-file-format-specifications)
+10. [Thread Ownership Matrix](#10-thread-ownership-matrix)
+11. [State Machines and Lifecycle Diagrams](#11-state-machines-and-lifecycle-diagrams)
+12. [Initialization and Shutdown Sequences](#12-initialization-and-shutdown-sequences)
+13. [Logging Contracts](#13-logging-contracts)
+14. [Module Public Interfaces](#14-module-public-interfaces)
+15. [Unit Test Plan](#15-unit-test-plan)
+16. [Integration Test Plan](#16-integration-test-plan)
+17. [Performance Acceptance Criteria](#17-performance-acceptance-criteria)
+18. [Dependency Rules and Import Boundaries](#18-dependency-rules-and-import-boundaries)
+19. [Coding Conventions Enforcement](#19-coding-conventions-enforcement)
+20. [Implementation Order](#20-implementation-order)
+
+---
+
+# 1. Coding Conventions
+
+## 1.1 Language and Runtime
+
+| Item | Standard |
+|---|---|
+| Python version | 3.11+ (use `match/case`, `tomllib`, `ExceptionGroup` where appropriate) |
+| Type annotations | Mandatory on all public and private methods, all class attributes, all module-level variables |
+| Type checker | `mypy --strict` must pass with zero errors |
+| Formatter | `ruff format` (default line length 99) |
+| Linter | `ruff check` with all default rules enabled |
+
+## 1.2 Naming Conventions
+
+| Element | Convention | Example |
+|---|---|---|
+| Module files | `snake_case.py` | `clipboard_manager.py` |
+| Classes | `PascalCase` | `ClipboardManager` |
+| Public methods | `snake_case` | `add_entry()` |
+| Private methods | `_snake_case` (single underscore) | `_schedule_save()` |
+| Constants | `UPPER_SNAKE_CASE` | `MAX_WORKSPACE_NAME_LENGTH` |
+| Enums | `PascalCase` class, `UPPER_SNAKE_CASE` members | `TypingState.TYPING` |
+| Signals | `snake_case` (descriptive verb phrase) | `entry_added`, `typing_paused` |
+| Pydantic models | `PascalCase` (noun) | `ClipboardEntry`, `AppSettings` |
+| Test files | `test_<module_name>.py` | `test_clipboard_manager.py` |
+| Test functions | `test_<behavior>_<condition>_<expected>` | `test_add_entry_with_empty_text_raises_validation_error` |
+
+## 1.3 Docstrings
+
+All public classes and methods must have Google-style docstrings:
+
+```python
+def add_entry(self, text: str, source_url: str = "", source_title: str = "") -> ClipboardEntry:
+    """Add a new text entry to the clipboard.
+
+    Creates a ClipboardEntry with a generated UUID, timestamps the current time,
+    computes char_count, persists to the store, and emits entry_added signal.
+
+    Args:
+        text: The clipboard text content. Must not be empty.
+        source_url: The browser URL at copy time. Empty string if unavailable.
+        source_title: The page title at copy time. Empty string if unavailable.
+
+    Returns:
+        The newly created ClipboardEntry with all fields populated.
+
+    Raises:
+        ValidationError: If text is empty or exceeds MAX_ENTRY_TEXT_LENGTH.
+        ClipboardStorageError: If the database write fails after retry.
+    """
+```
+
+## 1.4 Import Ordering
+
+Enforced by `ruff` rule `I001`:
+
+```python
+# 1. stdlib
+import sqlite3
+from pathlib import Path
+
+# 2. third-party
+from loguru import logger
+from pydantic import BaseModel, Field
+from PySide6.QtCore import QObject, Signal
+
+# 3. local (absolute imports only — no relative imports)
+from src.models.clipboard_entry import ClipboardEntry
+from src.core.events import AppSignals
+```
+
+## 1.5 File Size Limits
+
+| Limit | Value | Action if Exceeded |
+|---|---|---|
+| Max lines per file | 400 | Split into submodules |
+| Max methods per class | 20 | Extract helper class |
+| Max parameters per method | 6 | Introduce parameter object (Pydantic model) |
+| Max cyclomatic complexity | 10 | Refactor into smaller functions |
+
+---
+
+# 2. Folder-by-Folder Implementation Plan
+
+## 2.1 `src/` Root Files
+
+| File | Purpose | Key Contents |
+|---|---|---|
+| `__init__.py` | Package marker | Empty |
+| `main.py` | CLI entry point | `main(argv)` function; argparse; calls `BatmanOverlayApp.boot()` |
+| `app.py` | Application lifecycle | `BatmanOverlayApp(QApplication)` class; boot/shutdown orchestration; global exception hook |
+| `constants.py` | Application-wide constants | All `UPPER_SNAKE_CASE` values (see §4) |
+| `version.py` | Version string | `__version__ = "1.0.0"` |
+
+## 2.2 `src/models/`
+
+| File | Purpose | Key Classes |
+|---|---|---|
+| `__init__.py` | Re-exports all models | `from src.models.clipboard_entry import ClipboardEntry` etc. |
+| `clipboard_entry.py` | Clipboard entry DTO | `ClipboardEntry`, `ClipboardCategory` |
+| `workspace.py` | Workspace DTO | `Workspace`, `WorkspaceSummary`, `WorkspaceManifest` |
+| `session.py` | Session DTO | `SessionData`, `WindowState` |
+| `settings.py` | Settings hierarchy | `AppSettings`, `GeneralSettings`, `TypingSettings`, `AppearanceSettings`, `BrowserSettings`, `DownloadSettings`, `ClipboardSettings`, `AccessibilitySettings` |
+| `bookmark.py` | Bookmark DTO | `Bookmark`, `BookmarkFolder` |
+| `typing_job.py` | Typing job DTO | `TypingJob` |
+| `hotkey.py` | Hotkey bindings DTO | `HotkeyBindings`, `HotkeyBinding` |
+| `search_result.py` | Search result DTO | `SearchResult`, `SearchResultGroup` |
+| `notification.py` | Notification DTO | `NotificationAction` |
+
+## 2.3 `src/platform/`
+
+| File | Purpose | Key Classes |
+|---|---|---|
+| `__init__.py` | Package marker | Empty |
+| `win_api.py` | Low-level ctypes struct definitions | `INPUT`, `KEYBDINPUT`, `MOUSEINPUT`, `HARDWAREINPUT` ctypes structures |
+| `input_simulator.py` | SendInput wrapper | `InputSimulator` class implementing `InputSimulatorProtocol` |
+| `hotkey_registry.py` | RegisterHotKey/UnregisterHotKey wrapper | `HotkeyRegistry` class implementing `HotkeyRegistryProtocol` |
+| `system_info.py` | OS version, DPI, memory queries | `get_windows_version()`, `get_system_dpi()`, `get_available_memory_mb()` |
+
+## 2.4 `src/storage/`
+
+| File | Purpose | Key Classes |
+|---|---|---|
+| `__init__.py` | Package marker | Empty |
+| `database.py` | SQLite connection manager | `DatabaseManager` |
+| `json_store.py` | Atomic JSON file I/O | `JsonStore` |
+| `file_utils.py` | File system helpers | `ensure_dir()`, `atomic_write()`, `clean_orphaned_tmp()` |
+| `migrations/__init__.py` | Package marker | Empty |
+| `migrations/runner.py` | Migration orchestrator | `MigrationRunner` |
+| `migrations/v001_initial.py` | Initial schema | `upgrade(conn)` for clipboard, bookmarks, history |
+| `migrations/v002_history_fts.py` | History FTS5 index | `upgrade(conn)` adding FTS5 to history |
+
+## 2.5 `src/core/`
+
+| File | Purpose | Key Classes |
+|---|---|---|
+| `__init__.py` | Package marker | Empty |
+| `protocols.py` | All Protocol interfaces | See §5 for complete list |
+| `events.py` | Application-wide signal definitions | `AppSignals(QObject)` singleton-like signal hub |
+| `exceptions.py` | Exception hierarchy | See §7 |
+| `config_manager.py` | Settings load/save/validate | `ConfigManager(QObject)` |
+| `session_manager.py` | Auto-save + crash recovery | `SessionManager(QObject)` |
+| `workspace_manager.py` | Workspace CRUD + switching | `WorkspaceManager(QObject)` |
+| `hotkey_manager.py` | Global hotkey management | `HotkeyManager(QObject)` |
+| `search_engine.py` | Unified cross-source search | `SearchEngine(QObject)` |
+| `notification_manager.py` | Notification routing | `NotificationManager(QObject)` |
+| `update_manager.py` | Version check | `UpdateManager(QObject)` |
+| `theme_manager.py` | QSS theme management | `ThemeManager(QObject)` |
+| `accessibility_manager.py` | Screen reader + a11y | `AccessibilityManager(QObject)` |
+| `performance_monitor.py` | Runtime metrics | `PerformanceMonitor(QObject)` |
+| `logger.py` | Loguru configuration | `setup_logging(data_dir, debug)` |
+
+## 2.6 `src/browser/`
+
+| File | Purpose | Key Classes |
+|---|---|---|
+| `__init__.py` | Package marker | Empty |
+| `browser_widget.py` | QWebEngineView wrapper | `BrowserWidget(QWebEngineView)` |
+| `tab_manager.py` | Tab lifecycle | `TabManager(QObject)`, `TabState` |
+| `navigation_manager.py` | Back/forward/refresh/stop | `NavigationManager(QObject)` |
+| `address_bar.py` | URL input with autocomplete | `AddressBar(QLineEdit)` |
+| `bookmark_manager.py` | Bookmark CRUD | `BookmarkManager(QObject)` |
+| `download_manager.py` | Download handling | `DownloadManager(QObject)` |
+| `browser_profile.py` | Profile isolation | `BrowserProfileManager` |
+| `context_menu.py` | Custom right-click menu | `BrowserContextMenu(QMenu)` |
+| `history_manager.py` | Browser history recording | `HistoryManager(QObject)` |
+
+## 2.7 `src/clipboard/`
+
+| File | Purpose | Key Classes |
+|---|---|---|
+| `__init__.py` | Package marker | Empty |
+| `clipboard_manager.py` | Business logic | `ClipboardManager(QObject)`, `UndoToken` |
+| `clipboard_store.py` | SQLite data access | `ClipboardStore` implementing `ClipboardStoreProtocol` |
+| `clipboard_widget.py` | Clipboard panel UI | `ClipboardWidget(QWidget)` |
+| `category_manager.py` | Category CRUD | `CategoryManager` |
+
+## 2.8 `src/typing/`
+
+| File | Purpose | Key Classes |
+|---|---|---|
+| `__init__.py` | Package marker | Empty |
+| `typing_engine.py` | Typing state machine + worker thread | `TypingEngine(QObject)`, `_TypingWorker(QThread)` |
+| `typing_queue.py` | Job queue | `TypingQueue(QObject)` |
+| `typing_widget.py` | Typing panel UI | `TypingWidget(QWidget)` |
+| `speed_controller.py` | Delay calculator | `SpeedController` |
+| `input_simulator.py` | Re-export from platform | (Thin facade if needed; otherwise import directly) |
+
+## 2.9 `src/ui/`
+
+| File | Purpose | Key Classes |
+|---|---|---|
+| `__init__.py` | Package marker | Empty |
+| `main_window.py` | Main layout | `MainWindow(QMainWindow)`, `_PanelStack`, `_GeometryGuard` |
+| `title_bar.py` | Custom title bar | `TitleBar(QWidget)` |
+| `sidebar.py` | Icon sidebar | `Sidebar(QWidget)`, `SidebarButton(QToolButton)` |
+| `status_bar.py` | Status bar | `StatusBar(QWidget)` |
+| `splash_screen.py` | Startup splash | `SplashScreen(QSplashScreen)` |
+| `search_dialog.py` | Global search modal | `SearchDialog(QDialog)` |
+| `settings_panel.py` | Settings form | `SettingsPanel(QWidget)` |
+| `workspace_selector.py` | Workspace dropdown | `WorkspaceSelector(QWidget)` |
+| `toast.py` | Toast notifications | `ToastWidget(QWidget)`, `ToastManager` |
+| `dialogs.py` | Reusable dialogs | `ConfirmDialog`, `ErrorDialog`, `RecoveryDialog` |
+| `icons.py` | Icon loader | `IconManager` (loads SVGs from `resources/icons/`) |
+
+---
+
+# 3. Data Models and DTOs
+
+All models are Pydantic `BaseModel` subclasses. Models in `src/models/` must import ONLY from `pydantic`, `datetime`, `uuid`, `enum`, and Python stdlib.
+
+## 3.1 `ClipboardEntry` — `src/models/clipboard_entry.py`
+
+```python
+class ClipboardEntry(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    text: str = Field(min_length=1)
+    source_url: str = ""
+    source_title: str = ""
+    note: str = ""
+    categories: list[str] = Field(default_factory=list)   # category IDs
+    is_pinned: bool = False
+    char_count: int = Field(ge=0)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+class ClipboardCategory(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    name: str = Field(min_length=1, max_length=64)
+    color: str = Field(default="#5B8DEF", pattern=r"^#[0-9a-fA-F]{6}$")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+```
+
+## 3.2 `Workspace` — `src/models/workspace.py`
+
+```python
+class Workspace(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    name: str = Field(min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9 _-]+$")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    description: str = ""
+
+class WorkspaceSummary(BaseModel):
+    """Lightweight projection for listing workspaces."""
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    created_at: datetime
+    updated_at: datetime
+    entry_count: int = 0
+    tab_count: int = 0
+
+class WorkspaceManifest(BaseModel):
+    """Metadata stored inside .bmw export archives."""
+    model_config = ConfigDict(frozen=True)
+
+    schema_version: int = 1
+    app_version: str
+    export_timestamp: datetime
+    workspace_name: str
+```
+
+## 3.3 `SessionData` — `src/models/session.py`
+
+```python
+class WindowGeometry(BaseModel):
+    x: int = 100
+    y: int = 100
+    width: int = 1024
+    height: int = 768
+    opacity: float = Field(default=1.0, ge=0.1, le=1.0)
+    is_collapsed: bool = False
+    is_pinned: bool = False
+    is_always_on_top: bool = True
+    active_panel: str = "browser"
+
+class TabSnapshot(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    tab_id: int
+    url: str
+    title: str = ""
+    zoom_factor: float = 1.0
+    is_active: bool = False
+    is_lazy: bool = True   # True = metadata only, not loaded
+
+class SessionData(BaseModel):
+    version: int = 1
+    active_workspace: str = "default"
+    window_geometry: WindowGeometry = WindowGeometry()
+    typing_queue: list[str] = Field(default_factory=list)   # TypingJob IDs
+    saved_at: datetime = Field(default_factory=datetime.utcnow)
+```
+
+## 3.4 `AppSettings` — `src/models/settings.py`
+
+```python
+class GeneralSettings(BaseModel):
+    language: str = "en"
+    check_updates: bool = True
+    restore_session: bool = True
+    default_workspace: str = "default"
+
+class TypingSettings(BaseModel):
+    default_speed: int = Field(default=5, ge=1, le=10)
+    pre_typing_delay: int = Field(default=3, ge=1, le=10)
+    jitter_enabled: bool = True
+    jitter_range: float = Field(default=0.15, ge=0.05, le=0.25)
+
+class AppearanceSettings(BaseModel):
+    theme: str = Field(default="system", pattern=r"^(dark|light|system)$")
+    accent_color: str = Field(default="#5B8DEF", pattern=r"^#[0-9a-fA-F]{6}$")
+    font_family: str = "Inter"
+    font_scale: float = Field(default=1.0, ge=0.8, le=2.0)
+    default_opacity: float = Field(default=1.0, ge=0.1, le=1.0)
+
+class BrowserSettings(BaseModel):
+    home_page: str = "about:blank"
+    user_agent: str | None = None
+    javascript_enabled: bool = True
+    cookies_enabled: bool = True
+    proxy: str = "system"
+
+class DownloadSettings(BaseModel):
+    directory: str | None = None
+    ask_before_download: bool = True
+    show_notifications: bool = True
+
+class ClipboardSettings(BaseModel):
+    max_entries: int = Field(default=10000, ge=100)
+    auto_archive: bool = True
+    default_sort: str = Field(default="recency", pattern=r"^(recency|alphabetical|category)$")
+
+class AccessibilitySettings(BaseModel):
+    screen_reader: str = Field(default="auto", pattern=r"^(auto|enabled|disabled)$")
+    high_contrast: bool = False
+    reduce_animations: bool = False
+    focus_indicators: bool = True
+
+class AppSettings(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+    version: int = 1
+
+    general: GeneralSettings = GeneralSettings()
+    typing: TypingSettings = TypingSettings()
+    appearance: AppearanceSettings = AppearanceSettings()
+    browser: BrowserSettings = BrowserSettings()
+    downloads: DownloadSettings = DownloadSettings()
+    clipboard: ClipboardSettings = ClipboardSettings()
+    accessibility: AccessibilitySettings = AccessibilitySettings()
+```
+
+## 3.5 `Bookmark` — `src/models/bookmark.py`
+
+```python
+class Bookmark(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    title: str = Field(min_length=1, max_length=256)
+    url: str
+    folder_id: str | None = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+class BookmarkFolder(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    name: str = Field(min_length=1, max_length=128)
+    parent_id: str | None = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+```
+
+## 3.6 `TypingJob` — `src/models/typing_job.py`
+
+```python
+class TypingJob(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    text: str = Field(min_length=1)
+    speed_level: int = Field(default=5, ge=1, le=10)
+    pre_delay_seconds: int = Field(default=3, ge=1, le=10)
+    jitter_enabled: bool = True
+    jitter_range: float = Field(default=0.15, ge=0.05, le=0.25)
+    source_entry_id: str | None = None        # ClipboardEntry.id if originated from clipboard
+    char_count: int = Field(ge=1)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+```
+
+## 3.7 `HotkeyBindings` — `src/models/hotkey.py`
+
+```python
+class HotkeyBinding(BaseModel):
+    action: str
+    key_combo: str      # e.g. "Ctrl+Shift+T"
+    enabled: bool = True
+
+class HotkeyBindings(BaseModel):
+    version: int = 1
+    master_enabled: bool = True
+    bindings: list[HotkeyBinding] = Field(default_factory=lambda: [
+        HotkeyBinding(action="copy_to_clipboard", key_combo="Ctrl+Shift+C"),
+        HotkeyBinding(action="start_typing", key_combo="Ctrl+Shift+T"),
+        HotkeyBinding(action="pause_resume_typing", key_combo="Ctrl+Shift+P"),
+        HotkeyBinding(action="stop_typing", key_combo="Ctrl+Shift+S"),
+        HotkeyBinding(action="toggle_window", key_combo="Ctrl+Shift+B"),
+        HotkeyBinding(action="toggle_always_on_top", key_combo="Ctrl+Shift+A"),
+        HotkeyBinding(action="global_search", key_combo="Ctrl+Shift+F"),
+        HotkeyBinding(action="switch_workspace", key_combo="Ctrl+Shift+W"),
+    ])
+```
+
+## 3.8 `SearchResult` — `src/models/search_result.py`
+
+```python
+class SearchResult(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    title: str
+    subtitle: str = ""
+    source_type: str       # "clipboard" | "bookmark" | "tab" | "history" | "workspace"
+    relevance_score: float = 0.0
+    metadata: dict[str, str] = Field(default_factory=dict)
+
+class SearchResultGroup(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    source_type: str
+    label: str             # Human-readable: "Clipboard", "Bookmarks", etc.
+    results: list[SearchResult]
+    total_count: int
+```
+
+## 3.9 `NotificationAction` — `src/models/notification.py`
+
+```python
+class NotificationAction(BaseModel):
+    label: str
+    callback_id: str       # Key in a callback registry; not a callable (not serializable)
+```
+
+---
+
+# 4. Enums, Constants, and Configuration Objects
+
+## 4.1 Enums — `src/constants.py` and relevant modules
+
+### Typing State Enum (in `src/typing/typing_engine.py`)
+
+```python
+class TypingState(Enum):
+    IDLE = "idle"
+    COUNTDOWN = "countdown"
+    TYPING = "typing"
+    PAUSED = "paused"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+    ERROR = "error"
+```
+
+### Sort Order Enum (in `src/constants.py`)
+
+```python
+class SortOrder(Enum):
+    RECENCY = "recency"
+    ALPHABETICAL = "alphabetical"
+    CATEGORY = "category"
+```
+
+### Export Format Enum (in `src/constants.py`)
+
+```python
+class ExportFormat(Enum):
+    PLAIN_TEXT = "plain_text"
+    CSV = "csv"
+    JSON = "json"
+```
+
+### Panel Name Enum (in `src/constants.py`)
+
+```python
+class PanelName(Enum):
+    BROWSER = "browser"
+    CLIPBOARD = "clipboard"
+    TYPING = "typing"
+    BOOKMARKS = "bookmarks"
+    SETTINGS = "settings"
+```
+
+### Theme Name Enum (in `src/constants.py`)
+
+```python
+class ThemeName(Enum):
+    DARK = "dark"
+    LIGHT = "light"
+    SYSTEM = "system"
+```
+
+### Notification Level Enum (in `src/constants.py`)
+
+```python
+class NotificationLevel(Enum):
+    INFO = "info"
+    WARNING = "warning"
+    ERROR = "error"
+    CRITICAL = "critical"
+```
+
+### Search Source Type Enum (in `src/constants.py`)
+
+```python
+class SearchSourceType(Enum):
+    CLIPBOARD = "clipboard"
+    BOOKMARK = "bookmark"
+    TAB = "tab"
+    HISTORY = "history"
+    WORKSPACE = "workspace"
+```
+
+## 4.2 Constants — `src/constants.py`
+
+```python
+# Application
+APP_NAME: str = "batmanoverlay"
+APP_ORGANIZATION: str = "batmanoverlay"
+APP_DISPLAY_NAME: str = "batmanoverlay"
+
+# Versioning
+SETTINGS_SCHEMA_VERSION: int = 1
+HOTKEYS_SCHEMA_VERSION: int = 1
+SESSION_SCHEMA_VERSION: int = 1
+DB_SCHEMA_VERSION_CLIPBOARD: int = 1
+DB_SCHEMA_VERSION_BOOKMARKS: int = 1
+DB_SCHEMA_VERSION_HISTORY: int = 2
+
+# Limits
+MAX_WORKSPACE_NAME_LENGTH: int = 64
+MAX_ENTRY_TEXT_LENGTH: int = 1_000_000  # 1 MB of text
+MAX_NOTE_LENGTH: int = 10_000
+MAX_CATEGORY_NAME_LENGTH: int = 64
+MAX_TAB_COUNT_SOFT: int = 20
+MAX_TAB_COUNT_HARD: int = 50
+MAX_TOAST_VISIBLE: int = 3
+MAX_SEARCH_RESULTS_PER_SOURCE: int = 10
+MAX_IMPORT_ARCHIVE_SIZE_BYTES: int = 100 * 1024 * 1024  # 100 MB
+
+# Timing (milliseconds)
+UNDO_EXPIRATION_MS: int = 30_000
+AUTO_SAVE_INTERVAL_DEFAULT_MS: int = 60_000
+CONFIG_SAVE_DEBOUNCE_MS: int = 500
+GEOMETRY_SAVE_DEBOUNCE_MS: int = 200
+SEARCH_DEBOUNCE_MS: int = 300
+ARCHIVAL_DEBOUNCE_MS: int = 60_000
+TOAST_DEFAULT_DURATION_MS: int = 5000
+TOAST_WARNING_DURATION_MS: int = 8000
+WORKER_THREAD_JOIN_TIMEOUT_MS: int = 5000
+LOCK_ACQUIRE_TIMEOUT_S: float = 5.0
+UPDATE_CHECK_TIMEOUT_S: int = 10
+
+# Speed table (level → delay in ms)
+SPEED_TABLE: dict[int, int] = {
+    1: 2000, 2: 1000, 3: 600, 4: 400, 5: 300,
+    6: 200, 7: 133, 8: 100, 9: 75, 10: 60,
+}
+
+# UI sizing
+TITLE_BAR_HEIGHT: int = 36
+TAB_BAR_HEIGHT: int = 32
+STATUS_BAR_HEIGHT: int = 24
+SIDEBAR_COLLAPSED_WIDTH: int = 48
+SIDEBAR_EXPANDED_WIDTH: int = 240
+MIN_WINDOW_WIDTH: int = 400
+MIN_WINDOW_HEIGHT: int = 300
+CLIPBOARD_PANEL_MIN_WIDTH: int = 250
+
+# Animation durations (ms)
+ANIMATION_PANEL_SLIDE: int = 200
+ANIMATION_CLIPBOARD_ENTRY_ADD: int = 300
+ANIMATION_TOAST: int = 300
+ANIMATION_OPACITY_CHANGE: int = 150
+ANIMATION_WINDOW_COLLAPSE: int = 250
+ANIMATION_TAB_CLOSE: int = 200
+ANIMATION_SEARCH_MODAL: int = 200
+
+# File paths (relative to data_dir)
+CONFIG_DIR: str = "config"
+WORKSPACES_DIR: str = "workspaces"
+LOGS_DIR: str = "logs"
+SESSIONS_DIR: str = "sessions"
+SETTINGS_FILE: str = "settings.json"
+HOTKEYS_FILE: str = "hotkeys.json"
+SESSION_FILE: str = "session.json"
+SESSION_LOCK_FILE: str = "session.lock"
+LOG_FILE: str = "batmanoverlay.log"
+WORKSPACE_META_FILE: str = "meta.json"
+BROWSER_SESSION_FILE: str = "session.json"
+GEOMETRY_FILE: str = "geometry.json"
+TYPING_SETTINGS_FILE: str = "settings.json"
+
+# Workspace name validation regex
+WORKSPACE_NAME_PATTERN: str = r"^[a-zA-Z0-9 _-]{1,64}$"
+
+# Default workspace name
+DEFAULT_WORKSPACE_NAME: str = "default"
+
+# SQLite PRAGMAs (applied on every connection)
+SQLITE_PRAGMAS: list[str] = [
+    "PRAGMA journal_mode = WAL;",
+    "PRAGMA foreign_keys = ON;",
+    "PRAGMA synchronous = NORMAL;",
+    "PRAGMA cache_size = -8000;",
+    "PRAGMA busy_timeout = 5000;",
+]
+
+# Chromium flags
+CHROMIUM_DISK_CACHE_SIZE: int = 209715200  # 200 MB
+
+# Log configuration
+LOG_MAX_SIZE_BYTES: int = 10 * 1024 * 1024  # 10 MB
+LOG_RETENTION_COUNT: int = 5
+LOG_FORMAT: str = "{time:YYYY-MM-DDTHH:mm:ss.SSSZ} | {level:<8} | {module}:{function}:{line} | {message}"
+```
+
+---
+
+# 5. Protocol Definitions (Interfaces)
+
+All protocols are defined in `src/core/protocols.py`. Each is `@runtime_checkable`.
+
+## 5.1 `ClipboardStoreProtocol`
+
+```python
+@runtime_checkable
+class ClipboardStoreProtocol(Protocol):
+    def insert(self, entry: ClipboardEntry) -> None: ...
+    def delete(self, entry_id: str) -> None: ...
+    def bulk_delete(self, entry_ids: list[str]) -> None: ...
+    def update(self, entry: ClipboardEntry) -> None: ...
+    def get(self, entry_id: str) -> ClipboardEntry | None: ...
+    def get_all(self, sort: SortOrder, limit: int, offset: int) -> list[ClipboardEntry]: ...
+    def search(self, query: str, limit: int) -> list[ClipboardEntry]: ...
+    def count(self) -> int: ...
+    def insert_batch(self, entries: list[ClipboardEntry]) -> None: ...
+```
+
+## 5.2 `InputSimulatorProtocol`
+
+```python
+@runtime_checkable
+class InputSimulatorProtocol(Protocol):
+    def send_unicode_char(self, char: str) -> bool: ...
+    def send_key(self, vk_code: int) -> bool: ...
+    def send_key_down(self, vk_code: int) -> bool: ...
+    def send_key_up(self, vk_code: int) -> bool: ...
+```
+
+## 5.3 `HotkeyRegistryProtocol`
+
+```python
+@runtime_checkable
+class HotkeyRegistryProtocol(Protocol):
+    def register(self, hotkey_id: int, modifiers: int, vk_code: int) -> bool: ...
+    def unregister(self, hotkey_id: int) -> bool: ...
+```
+
+## 5.4 `SearchableSourceProtocol`
+
+```python
+@runtime_checkable
+class SearchableSourceProtocol(Protocol):
+    def source_type(self) -> SearchSourceType: ...
+    def search(self, query: str, limit: int) -> list[SearchResult]: ...
+```
+
+## 5.5 `WorkspaceProviderProtocol`
+
+```python
+@runtime_checkable
+class WorkspaceProviderProtocol(Protocol):
+    def active(self) -> Workspace: ...
+    def workspace_dir(self, name: str) -> Path: ...
+    def list_all(self) -> list[WorkspaceSummary]: ...
+```
+
+## 5.6 `ConfigProviderProtocol`
+
+```python
+@runtime_checkable
+class ConfigProviderProtocol(Protocol):
+    def get(self, key_path: str, default: Any = None) -> Any: ...
+    def settings(self) -> AppSettings: ...
+```
+
+---
+
+# 6. Signal and Event Registry
+
+All cross-module signals are defined in `src/core/events.py` as attributes of a single `AppSignals` class. This class is instantiated once by `BatmanOverlayApp` and passed to modules via constructor injection.
+
+```python
+class AppSignals(QObject):
+    """Central signal hub. One instance per application."""
+
+    # ── Clipboard signals ──
+    clipboard_entry_added = Signal(object)           # payload: ClipboardEntry
+    clipboard_entry_deleted = Signal(str)             # payload: entry_id
+    clipboard_entry_updated = Signal(object)          # payload: ClipboardEntry
+    clipboard_entries_bulk_deleted = Signal(list)     # payload: list[str] entry_ids
+
+    # ── Typing signals ──
+    typing_countdown_tick = Signal(int)               # payload: seconds_remaining
+    typing_started = Signal(object)                   # payload: TypingJob
+    typing_progress = Signal(int, int)                # payload: chars_done, chars_total
+    typing_paused = Signal(object)                    # payload: TypingJob
+    typing_resumed = Signal(object)                   # payload: TypingJob
+    typing_cancelled = Signal(object)                 # payload: TypingJob
+    typing_completed = Signal(object)                 # payload: TypingJob
+    typing_error = Signal(object, str)                # payload: TypingJob, error_message
+    typing_queue_changed = Signal()                   # payload: (none)
+
+    # ── Workspace signals ──
+    workspace_created = Signal(object)                # payload: Workspace
+    workspace_renamed = Signal(str, str)              # payload: old_name, new_name
+    workspace_deleted = Signal(str)                   # payload: workspace_name
+    workspace_switching = Signal(str)                 # payload: target_name
+    workspace_switched = Signal(object)               # payload: Workspace
+
+    # ── Browser signals ──
+    tab_created = Signal(int, str)                    # payload: tab_id, url
+    tab_closed = Signal(int)                          # payload: tab_id
+    tab_activated = Signal(int)                       # payload: tab_id
+    tab_count_changed = Signal(int)                   # payload: count
+    url_changed = Signal(str)                         # payload: url
+    page_loaded = Signal(str, str)                    # payload: url, title
+    page_load_failed = Signal(str, int)               # payload: url, error_code
+    text_selected_for_clipboard = Signal(str, str, str) # payload: text, url, title
+
+    # ── Navigation signals ──
+    can_go_back_changed = Signal(bool)
+    can_go_forward_changed = Signal(bool)
+    loading_changed = Signal(bool)                    # payload: is_loading
+
+    # ── Session signals ──
+    session_saved = Signal()
+    crash_detected = Signal()
+    session_restored = Signal()
+
+    # ── Config signals ──
+    config_changed = Signal(str, object)              # payload: key_path, new_value
+
+    # ── Hotkey signals ──
+    hotkey_triggered = Signal(str)                    # payload: action_name
+    hotkey_conflict = Signal(str, str)                # payload: action_name, key_combo
+
+    # ── Theme signals ──
+    theme_changed = Signal(str)                       # payload: "dark" | "light"
+
+    # ── Window signals ──
+    panel_changed = Signal(str)                       # payload: panel_name
+    geometry_changed = Signal(object)                 # payload: WindowGeometry
+
+    # ── Update signals ──
+    update_available = Signal(str, str)               # payload: new_version, download_url
+
+    # ── Performance signals ──
+    metrics_updated = Signal(object)                  # payload: PerformanceMetrics
+
+    # ── Accessibility signals ──
+    screen_reader_detected = Signal(bool)
+```
+
+### Signal Subscriber Table
+
+| Signal | Emitter | Subscribers |
+|---|---|---|
+| `clipboard_entry_added` | `ClipboardManager` | `ClipboardWidget`, `SearchEngine`, `StatusBar` |
+| `typing_started` | `TypingEngine` | `TypingWidget`, `StatusBar` |
+| `typing_progress` | `TypingEngine._TypingWorker` | `TypingWidget`, `StatusBar` |
+| `typing_completed` | `TypingEngine._TypingWorker` | `TypingWidget`, `StatusBar`, `TypingQueue` (auto-dequeue next) |
+| `workspace_switched` | `WorkspaceManager` | `MainWindow`, `TabManager`, `ClipboardManager`, `StatusBar`, `TitleBar` |
+| `config_changed` | `ConfigManager` | `ThemeManager`, `SpeedController`, `HotkeyManager`, `StatusBar` |
+| `hotkey_triggered` | `HotkeyManager` | `MainWindow` (dispatcher — routes to correct handler) |
+| `theme_changed` | `ThemeManager` | `MainWindow` (reapplies QSS) |
+| `tab_activated` | `TabManager` | `NavigationManager`, `AddressBar`, `StatusBar` |
+| `crash_detected` | `SessionManager` | `BatmanOverlayApp` (shows recovery dialog) |
+| `update_available` | `UpdateManager` | `NotificationManager` (shows toast) |
+
+---
+
+# 7. Exception Hierarchy and Error Codes
+
+Defined in `src/core/exceptions.py`.
+
+```python
+class BatmanOverlayError(Exception):
+    """Base exception. All application exceptions derive from this."""
+    error_code: str = "E000"
+    user_message: str = "An unexpected error occurred."
+
+class StorageError(BatmanOverlayError):
+    """Base for storage-related errors."""
+    error_code = "E100"
+
+class DatabaseConnectionError(StorageError):
+    error_code = "E101"
+    user_message = "Could not connect to the database."
+
+class DatabaseMigrationError(StorageError):
+    error_code = "E102"
+    user_message = "Database upgrade failed. Your data may need to be restored from backup."
+
+class ClipboardStorageError(StorageError):
+    error_code = "E110"
+    user_message = "Could not save to clipboard. The data file may be in use."
+
+class SessionCorruptionError(StorageError):
+    error_code = "E120"
+    user_message = "Your session file is corrupted. A fresh session will be started."
+
+class JsonFileError(StorageError):
+    error_code = "E130"
+    user_message = "A configuration file could not be read."
+
+class BrowserError(BatmanOverlayError):
+    error_code = "E200"
+
+class TabCrashError(BrowserError):
+    error_code = "E201"
+    user_message = "A browser tab crashed unexpectedly."
+
+class TypingError(BatmanOverlayError):
+    error_code = "E300"
+
+class TargetWindowLostError(TypingError):
+    error_code = "E301"
+    user_message = "Typing was paused because the target window is no longer focused."
+
+class SendInputFailureError(TypingError):
+    error_code = "E302"
+    user_message = "Could not send keystrokes. The target application may not accept input."
+
+class HotkeyError(BatmanOverlayError):
+    error_code = "E400"
+
+class HotkeyConflictError(HotkeyError):
+    error_code = "E401"
+    user_message = "This keyboard shortcut is already used by another application."
+
+class ConfigurationError(BatmanOverlayError):
+    error_code = "E500"
+    user_message = "A settings value is invalid and has been reset to default."
+
+class WorkspaceError(BatmanOverlayError):
+    error_code = "E600"
+
+class WorkspaceNameConflictError(WorkspaceError):
+    error_code = "E601"
+    user_message = "A workspace with this name already exists."
+
+class WorkspaceImportError(WorkspaceError):
+    error_code = "E602"
+    user_message = "The workspace file could not be imported."
+
+class DeadlockPreventionError(BatmanOverlayError):
+    error_code = "E700"
+    user_message = "An internal timeout occurred. Please restart the application."
+
+class UndoExpiredError(BatmanOverlayError):
+    error_code = "E800"
+    user_message = "The undo window has expired."
+```
+
+---
+
+# 8. Database Schema and Migration Plan
+
+## 8.1 Clipboard Database — `data/workspaces/<name>/clipboard/entries.db`
+
+### v001 — Initial Schema
+
+```sql
+-- Schema version tracking
+CREATE TABLE IF NOT EXISTS schema_version (
+    version     INTEGER PRIMARY KEY,
+    applied_at  TEXT NOT NULL
+);
+
+-- Clipboard entries
+CREATE TABLE IF NOT EXISTS clipboard_entries (
+    id          TEXT PRIMARY KEY,
+    text        TEXT NOT NULL,
+    source_url  TEXT DEFAULT '',
+    source_title TEXT DEFAULT '',
+    note        TEXT DEFAULT '',
+    is_pinned   INTEGER NOT NULL DEFAULT 0,
+    char_count  INTEGER NOT NULL,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+
+-- Categories
+CREATE TABLE IF NOT EXISTS categories (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL UNIQUE,
+    color       TEXT DEFAULT '#5B8DEF',
+    created_at  TEXT NOT NULL
+);
+
+-- Junction: entries ↔ categories
+CREATE TABLE IF NOT EXISTS entry_categories (
+    entry_id    TEXT NOT NULL REFERENCES clipboard_entries(id) ON DELETE CASCADE,
+    category_id TEXT NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+    PRIMARY KEY (entry_id, category_id)
+);
+
+-- FTS5 virtual table
+CREATE VIRTUAL TABLE IF NOT EXISTS clipboard_fts USING fts5(
+    text, note, source_title,
+    content='clipboard_entries',
+    content_rowid='rowid'
+);
+
+-- Sync triggers
+CREATE TRIGGER IF NOT EXISTS clipboard_ai AFTER INSERT ON clipboard_entries BEGIN
+    INSERT INTO clipboard_fts(rowid, text, note, source_title)
+    VALUES (new.rowid, new.text, new.note, new.source_title);
+END;
+
+CREATE TRIGGER IF NOT EXISTS clipboard_ad AFTER DELETE ON clipboard_entries BEGIN
+    INSERT INTO clipboard_fts(clipboard_fts, rowid, text, note, source_title)
+    VALUES ('delete', old.rowid, old.text, old.note, old.source_title);
+END;
+
+CREATE TRIGGER IF NOT EXISTS clipboard_au AFTER UPDATE ON clipboard_entries BEGIN
+    INSERT INTO clipboard_fts(clipboard_fts, rowid, text, note, source_title)
+    VALUES ('delete', old.rowid, old.text, old.note, old.source_title);
+    INSERT INTO clipboard_fts(rowid, text, note, source_title)
+    VALUES (new.rowid, new.text, new.note, new.source_title);
+END;
+
+-- Indexes
+CREATE INDEX IF NOT EXISTS idx_entries_pinned ON clipboard_entries(is_pinned);
+CREATE INDEX IF NOT EXISTS idx_entries_created ON clipboard_entries(created_at);
+```
+
+## 8.2 Bookmarks Database — `data/workspaces/<name>/browser/bookmarks.db`
+
+### v001 — Initial Schema
+
+```sql
+CREATE TABLE IF NOT EXISTS schema_version (
+    version     INTEGER PRIMARY KEY,
+    applied_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS bookmark_folders (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    parent_id   TEXT REFERENCES bookmark_folders(id) ON DELETE CASCADE,
+    created_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS bookmarks (
+    id          TEXT PRIMARY KEY,
+    title       TEXT NOT NULL,
+    url         TEXT NOT NULL,
+    folder_id   TEXT REFERENCES bookmark_folders(id) ON DELETE SET NULL,
+    created_at  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_bookmarks_folder ON bookmarks(folder_id);
+```
+
+## 8.3 History Database — `data/workspaces/<name>/browser/history.db`
+
+### v001 — Initial Schema
+
+```sql
+CREATE TABLE IF NOT EXISTS schema_version (
+    version     INTEGER PRIMARY KEY,
+    applied_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS browser_history (
+    id          TEXT PRIMARY KEY,
+    url         TEXT NOT NULL,
+    title       TEXT DEFAULT '',
+    visit_time  TEXT NOT NULL,
+    visit_count INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE INDEX IF NOT EXISTS idx_history_time ON browser_history(visit_time);
+```
+
+### v002 — History FTS5
+
+```sql
+CREATE VIRTUAL TABLE IF NOT EXISTS history_fts USING fts5(
+    url, title,
+    content='browser_history',
+    content_rowid='rowid'
+);
+
+-- FTS sync triggers (same pattern as clipboard)
+```
+
+## 8.4 Migration Contract
+
+```python
+# Every migration file must define:
+VERSION: int     # e.g. 1, 2, 3...
+DATABASE: str    # "clipboard" | "bookmarks" | "history"
+
+def upgrade(conn: sqlite3.Connection) -> None:
+    """Execute DDL/DML for this migration version.
+    
+    Must be idempotent (use IF NOT EXISTS).
+    Must not commit (caller manages the transaction).
+    """
+```
+
+---
+
+# 9. File Format Specifications
+
+## 9.1 `data/config/settings.json`
+
+Validated by `AppSettings` Pydantic model (§3.4). Complete default:
+
+```json
+{
+    "version": 1,
+    "general": {"language": "en", "check_updates": true, "restore_session": true, "default_workspace": "default"},
+    "typing": {"default_speed": 5, "pre_typing_delay": 3, "jitter_enabled": true, "jitter_range": 0.15},
+    "appearance": {"theme": "system", "accent_color": "#5B8DEF", "font_family": "Inter", "font_scale": 1.0, "default_opacity": 1.0},
+    "browser": {"home_page": "about:blank", "user_agent": null, "javascript_enabled": true, "cookies_enabled": true, "proxy": "system"},
+    "downloads": {"directory": null, "ask_before_download": true, "show_notifications": true},
+    "clipboard": {"max_entries": 10000, "auto_archive": true, "default_sort": "recency"},
+    "accessibility": {"screen_reader": "auto", "high_contrast": false, "reduce_animations": false, "focus_indicators": true}
+}
+```
+
+## 9.2 `data/config/hotkeys.json`
+
+Validated by `HotkeyBindings` model (§3.7).
+
+## 9.3 `data/sessions/session.json`
+
+Validated by `SessionData` model (§3.3).
+
+## 9.4 `data/workspaces/<name>/meta.json`
+
+```json
+{
+    "version": 1,
+    "name": "Workshop A",
+    "created_at": "2026-08-07T10:00:00Z",
+    "updated_at": "2026-08-07T14:30:00Z",
+    "description": ""
+}
+```
+
+## 9.5 `data/workspaces/<name>/browser/session.json`
+
+```json
+{
+    "version": 1,
+    "tabs": [
+        {"tab_id": 1, "url": "https://chat.openai.com", "title": "ChatGPT", "zoom_factor": 1.0, "is_active": true, "is_lazy": false},
+        {"tab_id": 2, "url": "https://claude.ai", "title": "Claude", "zoom_factor": 1.0, "is_active": false, "is_lazy": true}
+    ],
+    "next_tab_id": 3
+}
+```
+
+## 9.6 `data/workspaces/<name>/window/geometry.json`
+
+Validated by `WindowGeometry` model (§3.3).
+
+## 9.7 `data/workspaces/<name>/typing/settings.json`
+
+```json
+{
+    "version": 1,
+    "speed_level": 5,
+    "pre_typing_delay": 3,
+    "jitter_enabled": true,
+    "jitter_range": 0.15
+}
+```
+
+## 9.8 `data/session.lock`
+
+Plain text file containing a single integer: the PID of the running instance.
+
+```
+12345
+```
+
+---
+
+# 10. Thread Ownership Matrix
+
+| Class | Owner Thread | Rationale |
+|---|---|---|
+| `BatmanOverlayApp` | Main | QApplication runs on main thread |
+| `MainWindow` | Main | All Qt widgets are main-thread only |
+| `TitleBar`, `Sidebar`, `StatusBar` | Main | Qt widgets |
+| `ClipboardWidget`, `TypingWidget`, `SettingsPanel` | Main | Qt widgets |
+| `SearchDialog`, `ToastWidget` | Main | Qt widgets |
+| `SplashScreen` | Main | Qt widget |
+| `ConfigManager` | Main | Reads/writes config; emits signals |
+| `SessionManager` | Main | Timer-driven; delegates heavy I/O to QThreadPool |
+| `WorkspaceManager` | Main | Orchestrates workspace switch on main thread |
+| `HotkeyManager` | Main | Processes WM_HOTKEY on main thread event loop |
+| `SearchEngine` | Main | Delegates FTS5 queries; results returned on main |
+| `NotificationManager` | Main | UI routing |
+| `ThemeManager` | Main | QSS application must be main thread |
+| `AccessibilityManager` | Main | QAccessible is main-thread only |
+| `UpdateManager` | Main (dispatch) | Actual HTTPS request on QThreadPool |
+| `PerformanceMonitor` | Main (sampling via QTimer) | Metrics sampled periodically |
+| `TabManager` | Main | Manages Qt widgets |
+| `NavigationManager` | Main | Forwards commands to QWebEngineView |
+| `BrowserWidget` | Main | QWebEngineView must be main-thread |
+| `BrowserProfileManager` | Main | QWebEngineProfile is main-thread |
+| `ClipboardManager` | Main | Business logic; delegates heavy DB ops to QThreadPool |
+| `ClipboardStore` | Main (primary), QThreadPool (bulk ops) | Thread-local DB connections |
+| `TypingEngine` | Main (control), _TypingWorker (execution) | Commands on main; keystrokes on worker |
+| `_TypingWorker` | **Dedicated QThread** | SendInput calls with sleep delays |
+| `TypingQueue` | Main | Queue management on main thread |
+| `SpeedController` | **Dedicated QThread** (read) + Main (write) | Read by worker; speed set by main |
+| `DatabaseManager` | Thread-local connections | Each thread opens its own connection |
+| `JsonStore` | Any (stateless) | Atomic file I/O is inherently thread-safe |
+| `MigrationRunner` | Main (during boot) | Migrations run once before UI |
+| `InputSimulator` | **Dedicated QThread** (via _TypingWorker) | SendInput calls |
+| `HotkeyRegistry` | Main | RegisterHotKey must be called from the thread that owns the message loop |
+
+---
+
+# 11. State Machines and Lifecycle Diagrams
+
+## 11.1 Typing Engine State Machine
+
+### States
+
+| State | Description | Entry Action | Exit Action |
+|---|---|---|---|
+| `IDLE` | No typing job active | Clear `_current_job` | — |
+| `COUNTDOWN` | Pre-typing delay (3, 2, 1...) | Emit `countdown_tick(3)` | — |
+| `TYPING` | Characters being sent via SendInput | Emit `typing_started` or `typing_resumed` | — |
+| `PAUSED` | Typing suspended by user | Emit `typing_paused`; set pause event | — |
+| `COMPLETED` | All characters sent | Emit `typing_completed` | Worker thread exits |
+| `CANCELLED` | User cancelled during typing or pause | Emit `typing_cancelled` | Worker thread exits |
+| `ERROR` | SendInput failure or worker crash | Emit `typing_error` | Worker thread exits |
+
+### Transition Table
+
+| Current State | Trigger | Guard | Next State | Side Effect |
+|---|---|---|---|---|
+| `IDLE` | `start(job)` called | Job text is not empty | `COUNTDOWN` | Create worker thread; start countdown timer |
+| `IDLE` | `pause()` called | — | `IDLE` | No-op (idempotent) |
+| `IDLE` | `resume()` called | — | `IDLE` | No-op (idempotent) |
+| `IDLE` | `cancel()` called | — | `IDLE` | No-op (idempotent) |
+| `COUNTDOWN` | Timer tick | seconds > 0 | `COUNTDOWN` | Emit `countdown_tick(seconds - 1)` |
+| `COUNTDOWN` | Timer tick | seconds == 0 | `TYPING` | Start character loop on worker thread |
+| `COUNTDOWN` | `cancel()` called | — | `CANCELLED` | Stop timer; destroy worker |
+| `COUNTDOWN` | `pause()` called | — | `PAUSED` | Stop countdown timer; save remaining seconds |
+| `TYPING` | Character sent | chars_done < chars_total | `TYPING` | Emit `typing_progress(chars_done, chars_total)` |
+| `TYPING` | Character sent | chars_done == chars_total | `COMPLETED` | Emit `typing_completed` |
+| `TYPING` | `pause()` called | — | `PAUSED` | Set pause event; worker blocks on event |
+| `TYPING` | `cancel()` called | — | `CANCELLED` | Set cancel flag; worker exits loop |
+| `TYPING` | SendInput error | — | `ERROR` | Emit `typing_error`; worker exits |
+| `PAUSED` | `resume()` called | — | `TYPING` / `COUNTDOWN` | Clear pause event; resume from saved position |
+| `PAUSED` | `cancel()` called | — | `CANCELLED` | Destroy worker |
+| `COMPLETED` | — | — | (terminal) | Auto-dequeue next job from TypingQueue |
+| `CANCELLED` | — | — | (terminal) | Set state to IDLE after cleanup |
+| `ERROR` | — | — | (terminal) | Set state to IDLE after cleanup |
+
+### Invalid Transitions (Must Log WARNING and No-Op)
+
+- `start()` when state is not `IDLE`
+- `resume()` when state is not `PAUSED`
+- Any command on terminal states (`COMPLETED`, `CANCELLED`, `ERROR`)
+
+## 11.2 Application Lifecycle
+
+```
+main(argv)
+    │
+    ├── Parse args (--version → exit)
+    ├── Create BatmanOverlayApp(argv)
+    │
+    ▼
+boot()
+    │
+    ├── setup_logging()
+    ├── ConfigManager.load()
+    ├── ThemeManager.apply_theme()
+    ├── AccessibilityManager.detect()
+    ├── SplashScreen.show()
+    ├── SessionManager.acquire_lock()
+    ├── SessionManager.check_crash() → [Recovery Dialog if crash]
+    ├── WorkspaceManager.load_active()
+    ├── DatabaseManager.connect() (per workspace DBs)
+    ├── BrowserProfileManager.load_profile()
+    ├── ClipboardManager.init()
+    ├── TypingEngine.init()
+    ├── HotkeyManager.register_all()
+    ├── SearchEngine.register_sources()
+    ├── NotificationManager.init()
+    ├── UpdateManager.check_for_updates()
+    ├── PerformanceMonitor.start()
+    ├── MainWindow.show()
+    ├── SplashScreen.hide()
+    ├── PerformanceMonitor.mark_startup_complete()
+    │
+    ▼
+app.exec()  ← Qt event loop
+    │
+    ▼ (on quit signal)
+shutdown()
+    │
+    ├── MainWindow.hide()
+    ├── PerformanceMonitor.stop()
+    ├── HotkeyManager.unregister_all()
+    ├── TypingEngine.cancel() + worker.join(5s)
+    ├── SessionManager.save_now()
+    ├── SessionManager.release_lock()
+    ├── ClipboardManager.flush()
+    ├── BrowserProfileManager.flush()
+    ├── WorkspaceManager.save_active()
+    ├── DatabaseManager.close_all()
+    ├── ConfigManager.flush()
+    ├── Logger: "Graceful shutdown completed"
+    │
+    ▼
+return exit_code
+```
+
+---
+
+# 12. Initialization and Shutdown Sequences
+
+## 12.1 Initialization Steps (Detail)
+
+| Step | Module | Action | Error Handling |
+|---|---|---|---|
+| 1 | Logger | `setup_logging(data_dir, debug)` — creates log dir, configures sinks | Fatal if log dir cannot be created (exit 1) |
+| 2 | ConfigManager | `__init__(config_dir)` → load `settings.json` → validate → fill defaults | Corrupted file → backup + regenerate from defaults; log WARNING |
+| 3 | ThemeManager | `__init__(app, resources_dir)` → `apply_theme(config.appearance.theme)` | Missing QSS → apply hardcoded dark theme; log WARNING |
+| 4 | AccessibilityManager | `__init__(config)` → detect screen reader → configure Qt a11y | Detection failure → default to disabled; log INFO |
+| 5 | SplashScreen | `show()` | Cannot fail (QSplashScreen is simple) |
+| 6 | SessionManager | `acquire_lock()` → `check_crash()` | Lock file conflict → show dialog: "Another instance may be running" |
+| 7 | SessionManager | `recover_session()` if crash detected | Recovery failure → start fresh; log WARNING |
+| 8 | WorkspaceManager | `__init__(data_dir)` → load active workspace from session | Missing workspace dir → recreate "default"; log WARNING |
+| 9 | DatabaseManager | Open clipboard, bookmarks, history DBs for active workspace | DB corruption → recreate empty; log ERROR; notify user |
+| 10 | BrowserProfileManager | `get_profile(active_workspace)` | Profile corruption → delete + recreate; log WARNING |
+| 11 | ClipboardManager | `__init__(store)` — ClipboardStore binds to database | Store init failure → empty clipboard; log ERROR |
+| 12 | TypingEngine | `__init__(simulator, speed_controller)` — state = IDLE | Cannot fail (no I/O) |
+| 13 | HotkeyManager | `register_all(bindings)` | Per-key conflict → emit `hotkey_conflict`; skip conflicting key; log WARNING |
+| 14 | SearchEngine | `register_source(clipboard)`, `register_source(bookmarks)` | Cannot fail |
+| 15 | NotificationManager | `__init__()` | Cannot fail |
+| 16 | UpdateManager | `check_for_updates()` — async on QThreadPool | Network error → silent; log DEBUG |
+| 17 | PerformanceMonitor | `start()` | psutil unavailable → degrade gracefully; log INFO |
+| 18 | MainWindow | `__init__(app_context)` → `show()` → hide splash | Geometry restore failure → default geometry; log WARNING |
+
+## 12.2 Shutdown Steps (Detail)
+
+| Step | Module | Action | Error Handling |
+|---|---|---|---|
+| 1 | MainWindow | `hide()` | Best effort |
+| 2 | PerformanceMonitor | `stop()` | Best effort |
+| 3 | UpdateManager | Cancel pending thread | Best effort |
+| 4 | HotkeyManager | `unregister_all()` | Log WARNING on failure; continue |
+| 5 | TypingEngine | `cancel()` → `_worker.wait(5000)` | Timeout → log WARNING "Worker abandoned" |
+| 6 | SessionManager | `save_now()` → `release_lock()` | Save failure → log ERROR; continue |
+| 7 | SearchEngine | (no persistent state) | — |
+| 8 | ClipboardManager | Flush pending writes | DB write failure → log ERROR |
+| 9 | BrowserProfileManager | `flush_profile()` | Best effort |
+| 10 | WorkspaceManager | Save active workspace state | Write failure → log ERROR |
+| 11 | DatabaseManager | `close_all()` | Best effort; log WARNING on error |
+| 12 | NotificationManager | Dismiss all toasts | Best effort |
+| 13 | ConfigManager | Flush pending writes | Write failure → log ERROR |
+| 14 | Logger | Log "Graceful shutdown completed" → flush → close sinks | — |
+
+---
+
+# 13. Logging Contracts
+
+## 13.1 Per-Module Log Events
+
+| Module | Event | Level | Message Template | Structured Fields |
+|---|---|---|---|---|
+| `app` | Startup | INFO | `"batmanoverlay v{version} starting on {os_version}"` | `version`, `os_version` |
+| `app` | Shutdown | INFO | `"Graceful shutdown completed in {duration_ms}ms"` | `duration_ms` |
+| `app` | Unhandled exception | CRITICAL | `"Unhandled exception: {exc_type}: {exc_msg}"` | `exc_type`, `exc_msg`, `traceback` |
+| `workspace` | Created | INFO | `"Workspace created: {name}"` | `name` |
+| `workspace` | Switched | INFO | `"Switched to workspace: {name}"` | `name`, `duration_ms` |
+| `workspace` | Deleted | INFO | `"Workspace deleted: {name}"` | `name` |
+| `browser.tab` | Opened | INFO | `"Tab opened"` | `tab_id`, `url` |
+| `browser.tab` | Closed | INFO | `"Tab closed"` | `tab_id` |
+| `browser.tab` | Crashed | ERROR | `"Tab renderer crashed"` | `tab_id`, `status` |
+| `clipboard` | Entry added | DEBUG | `"Clipboard entry added"` | `entry_id`, `char_count` |
+| `clipboard` | Search | DEBUG | `"Clipboard search"` | `query_length`, `result_count`, `duration_ms` |
+| `typing` | Started | INFO | `"Typing started"` | `job_id`, `speed`, `char_count` |
+| `typing` | Paused | INFO | `"Typing paused"` | `job_id`, `chars_typed` |
+| `typing` | Resumed | INFO | `"Typing resumed"` | `job_id`, `chars_typed` |
+| `typing` | Completed | INFO | `"Typing completed"` | `job_id`, `duration_ms` |
+| `typing` | Cancelled | INFO | `"Typing cancelled"` | `job_id`, `chars_typed` |
+| `typing` | Error | ERROR | `"Typing error: {error}"` | `job_id`, `error` |
+| `hotkey` | Registered | DEBUG | `"Hotkey registered"` | `action`, `key_combo` |
+| `hotkey` | Conflict | WARNING | `"Hotkey conflict"` | `action`, `key_combo` |
+| `session` | Auto-saved | DEBUG | `"Session auto-saved"` | — |
+| `session` | Crash detected | INFO | `"Crash detected; offering recovery"` | `stale_pid` |
+| `session` | Recovered | INFO | `"Session recovered from crash"` | — |
+| `config` | Loaded | DEBUG | `"Settings loaded"` | `path` |
+| `config` | Validation fallback | WARNING | `"Setting validation fallback"` | `field`, `invalid_value`, `default_value` |
+| `storage` | Migration applied | INFO | `"Migration applied"` | `database`, `from_version`, `to_version` |
+| `storage` | Disk space warning | WARNING | `"Disk space low"` | `free_mb` |
+
+## 13.2 What Must NEVER Be Logged
+
+| Data Type | Reason |
+|---|---|
+| Clipboard entry `text` content | Privacy |
+| Typed text content | Privacy |
+| Full URLs beyond tab open/close | Privacy |
+| Passwords, tokens, cookies, session IDs | Security |
+| Personally identifiable information | Privacy |
+
+The Loguru privacy filter strips any structured field named `text`, `password`, `token`, `cookie`, `session_id`, `credential` from log output.
+
+---
+
+# 14. Module Public Interfaces
+
+Complete method signatures for every public class are defined in the SAD §4 (Module Breakdown). This section provides the supplementary contract details not covered there.
+
+## 14.1 `DatabaseManager` — Transaction Context Manager
+
+```python
+@contextmanager
+def transaction(self) -> Generator[sqlite3.Connection, None, None]:
+    """Usage: with db.transaction() as conn: conn.execute(...)
+    
+    Begins a transaction. Commits on clean exit. Rolls back on exception.
+    Re-raises the exception after rollback.
+    """
+```
+
+## 14.2 `JsonStore` — Error Recovery
+
+```python
+def read(self, path: Path, schema: type[BaseModel] | None = None) -> dict | BaseModel:
+    """Read JSON file. If schema is provided, validate and return model instance.
+    
+    Raises:
+        JsonFileError: If file cannot be read or parsed.
+        ValidationError: If schema validation fails (caller decides fallback).
+    """
+
+def write_atomic(self, path: Path, data: dict | BaseModel) -> None:
+    """Write JSON atomically via tmp file + os.replace.
+    
+    Raises:
+        JsonFileError: If write fails (disk full, permissions).
+    """
+```
+
+## 14.3 `SearchEngine` — Source Registration
+
+```python
+def register_source(self, source: SearchableSourceProtocol) -> None:
+    """Register a searchable data source. Sources are queried in parallel."""
+
+def unregister_source(self, source_type: SearchSourceType) -> None:
+    """Remove a registered source (e.g., on workspace switch)."""
+
+def search(self, query: str) -> list[SearchResultGroup]:
+    """Search all registered sources. Returns results grouped by source type.
+    
+    Each source is queried with limit=MAX_SEARCH_RESULTS_PER_SOURCE.
+    Results are sorted by relevance within each group.
+    Total time budget: 300ms.
+    """
+```
+
+## 14.4 `BrowserProfileManager`
+
+```python
+class BrowserProfileManager:
+    def get_profile(self, workspace_name: str) -> QWebEngineProfile:
+        """Return the profile for the named workspace. Creates lazily on first access.
+        
+        Profile storage path: data/workspaces/<name>/browser/profile/
+        Sets: AllowPersistentCookies, cache size, user agent (if configured).
+        """
+
+    def flush_profile(self) -> None:
+        """Force Chromium to write cookies/storage to disk."""
+
+    def delete_profile(self, workspace_name: str) -> None:
+        """Delete the Chromium profile directory for a workspace."""
+
+    def create_profile(self, workspace_name: str) -> QWebEngineProfile:
+        """Explicitly create a new profile. Used by WorkspaceManager.create()."""
+```
+
+---
+
+# 15. Unit Test Plan
+
+## 15.1 Test File Inventory
+
+| Test File | Module Under Test | Key Test Cases |
+|---|---|---|
+| `test_clipboard_manager.py` | `ClipboardManager` | add_entry (valid, empty text, max length), delete_entry + undo, bulk_delete + undo, pin/unpin, set_note, set_categories, search (FTS5 ranking), get_all (pagination, sort orders), export (all formats), auto-archival trigger, entry_count |
+| `test_clipboard_store.py` | `ClipboardStore` | insert + get round-trip, delete (cascade to entry_categories), update, search accuracy (prefix, multi-word, no results), get_all with sort, count, bulk operations, FTS5 trigger sync |
+| `test_typing_engine.py` | `TypingEngine` | All state transitions (valid + invalid), countdown timing, progress emission frequency, pause at exact character, resume from exact position, cancel during countdown, cancel during typing, error on SendInput failure, Unicode character dispatch, newline/tab mapping, concurrent pause/cancel from main thread |
+| `test_speed_controller.py` | `SpeedController` | All 10 speed levels (delay_ms matches SPEED_TABLE), jitter distribution (1K samples: mean within 5% of base, range within jitter_range * base), estimated_time_ms accuracy, set_speed boundary (1 and 10), jitter disabled → exact base delay |
+| `test_typing_queue.py` | `TypingQueue` | enqueue/dequeue FIFO, remove by ID, reorder, peek (non-destructive), clear, size, is_empty, queue_changed signal emission |
+| `test_workspace_manager.py` | `WorkspaceManager` | create (valid name, duplicate name → error, invalid chars → error), rename (valid, to duplicate → error), duplicate (deep copy verification), delete (normal, default → error), switch (save + load round-trip), list_all, export/import round-trip, workspace_dir path correctness |
+| `test_config_manager.py` | `ConfigManager` | Load valid settings, load with missing fields (defaults), load with invalid values (clamped), set valid value + signal emission, set invalid value (rejected), reset_section, reset_all, debounced save (only one write), schema migration (v0 → v1) |
+| `test_session_manager.py` | `SessionManager` | acquire_lock (creates file), release_lock (deletes file), check_crash (stale PID → True, running PID → False, no file → False), auto_save (dirty flag optimization), save_now (serialization), recover_session (deserialization), save + recover round-trip |
+| `test_hotkey_manager.py` | `HotkeyManager` | register_all (mocked registry), register conflict (registry returns False → emit hotkey_conflict), unregister, update_binding (unregister old + register new), set_enabled(False) → unregister all, set_enabled(True) → re-register all, hotkey_triggered signal emission |
+| `test_search_engine.py` | `SearchEngine` | register/unregister sources, search with single source, search with multiple sources (results grouped), search with no results, search performance (< 300ms with mocked sources) |
+| `test_navigation_manager.py` | `NavigationManager` | go_back/forward (can_go_* signals), navigate_to (url_changed signal), refresh, stop, set_active_widget switching |
+| `test_models.py` | All Pydantic models | Required field validation, optional field defaults, min/max length, regex patterns, frozen immutability, serialization round-trip (model_dump → model_validate), edge cases (empty strings, boundary values, Unicode) |
+| `test_json_store.py` | `JsonStore` | read valid file, read missing file (FileNotFoundError → JsonFileError), read corrupted JSON (ValueError → JsonFileError), write_atomic (verify tmp file removed), write_atomic (verify original untouched on failure), concurrent reads |
+| `test_database.py` | `DatabaseManager` | connect/close lifecycle, WAL mode enabled, foreign_keys enabled, transaction commit, transaction rollback on exception, thread-local connections (2 threads get separate connections), migration runner integration |
+| `test_validators.py` | Input validators | workspace_name: valid, too long, invalid chars, empty; URL: valid http/https, javascript: rejected, data: rejected; hotkey combo parsing |
+
+## 15.2 Shared Fixtures (`tests/conftest.py`)
+
+```python
+@pytest.fixture
+def tmp_data_dir(tmp_path: Path) -> Path:
+    """Create a temporary data directory with default structure."""
+
+@pytest.fixture
+def db_factory(tmp_data_dir: Path) -> Callable[[str], DatabaseManager]:
+    """Factory for in-memory or file-based DatabaseManager instances."""
+
+@pytest.fixture
+def mock_input_simulator() -> InputSimulatorProtocol:
+    """Mock InputSimulator that records calls instead of sending keystrokes."""
+
+@pytest.fixture
+def mock_hotkey_registry() -> HotkeyRegistryProtocol:
+    """Mock HotkeyRegistry that records register/unregister calls."""
+
+@pytest.fixture
+def sample_entries() -> list[ClipboardEntry]:
+    """Load 100 sample clipboard entries from fixtures/sample_entries.json."""
+
+@pytest.fixture
+def app_settings() -> AppSettings:
+    """Default AppSettings instance."""
+
+@pytest.fixture
+def qtbot(qtbot):
+    """pytest-qt qtbot fixture (re-exported for convenience)."""
+```
+
+---
+
+# 16. Integration Test Plan
+
+## 16.1 Test Scenarios
+
+### Scenario 1: Copy → Queue → Type Pipeline
+
+| Step | Action | Verification |
+|---|---|---|
+| 1 | Create ClipboardManager with real ClipboardStore (in-memory SQLite) | Store is empty |
+| 2 | Call `add_entry("Hello World", url, title)` | `entry_added` signal emitted; store.count() == 1 |
+| 3 | Create TypingJob from ClipboardEntry | Job has correct text, char_count, source_entry_id |
+| 4 | Enqueue job in TypingQueue | `queue_changed` signal emitted; queue.size() == 1 |
+| 5 | Start TypingEngine with dequeued job (mocked InputSimulator) | State transitions: IDLE → COUNTDOWN → TYPING → COMPLETED |
+| 6 | Verify InputSimulator received correct character sequence | All characters in order; newlines mapped to VK_RETURN |
+
+### Scenario 2: Workspace Lifecycle
+
+| Step | Action | Verification |
+|---|---|---|
+| 1 | Create WorkspaceManager with tmp_data_dir | Default workspace exists |
+| 2 | Create workspace "Test A" | Directory structure created; meta.json written; workspace_created signal |
+| 3 | Switch to "Test A" | workspace_switching + workspace_switched signals; databases opened |
+| 4 | Add clipboard entry in "Test A" | Entry persisted in Test A's entries.db |
+| 5 | Switch to "default" | Test A's entry NOT visible in default's clipboard |
+| 6 | Switch back to "Test A" | Entry is still there |
+| 7 | Delete "Test A" | Directory removed; workspace_deleted signal |
+
+### Scenario 3: Session Save → Crash → Recover
+
+| Step | Action | Verification |
+|---|---|---|
+| 1 | SessionManager.acquire_lock() | Lock file contains current PID |
+| 2 | SessionManager.save_now() with test session data | session.json written |
+| 3 | Simulate crash: do NOT call release_lock(); re-create SessionManager | — |
+| 4 | New SessionManager.check_crash() | Returns True (stale PID detected) |
+| 5 | New SessionManager.recover_session() | Returns SessionData matching step 2 |
+| 6 | Verify recovered session matches saved session | Active workspace, geometry, etc. |
+
+### Scenario 4: Settings Change → Module Reaction
+
+| Step | Action | Verification |
+|---|---|---|
+| 1 | ConfigManager.set("typing.default_speed", 8) | `config_changed("typing.default_speed", 8)` signal emitted |
+| 2 | SpeedController receives signal | SpeedController._speed_level == 8 |
+| 3 | SpeedController.delay_ms() | Returns base delay for speed 8 (100ms ± jitter) |
+| 4 | ConfigManager.set("appearance.theme", "dark") | `config_changed("appearance.theme", "dark")` signal emitted |
+| 5 | ThemeManager receives signal | ThemeManager.current_theme() == "dark" |
+
+### Scenario 5: Export → Import Round-Trip
+
+| Step | Action | Verification |
+|---|---|---|
+| 1 | Create workspace "Export Test" with 5 clipboard entries | — |
+| 2 | WorkspaceManager.export_workspace("Export Test", path) | .bmw file created |
+| 3 | Delete "Export Test" | Workspace removed |
+| 4 | WorkspaceManager.import_workspace(path) | New workspace created with imported data |
+| 5 | Verify clipboard entries | All 5 entries present with correct data |
+
+---
+
+# 17. Performance Acceptance Criteria
+
+| Metric | Budget | Measurement | Automated |
+|---|---|---|---|
+| Cold startup to interactive UI | < 5,000 ms | `time.perf_counter()` from `main()` entry to `PerformanceMonitor.mark_startup_complete()` | Yes (pytest) |
+| Warm restore (minimize → show) | < 500 ms | Manual measurement | No |
+| Clipboard entry add | < 100 ms | Timer around `ClipboardManager.add_entry()` | Yes (pytest) |
+| Clipboard FTS5 search (10K entries) | < 200 ms | Timer around `ClipboardStore.search()` | Yes (pytest benchmark) |
+| Global search (all sources) | < 300 ms | Timer around `SearchEngine.search()` | Yes (pytest benchmark) |
+| Workspace switch | < 1,000 ms | Timer around `WorkspaceManager.switch()` | Yes (pytest) |
+| Typing engine per-keystroke overhead | < 5 ms | Timer around `InputSimulator.send_unicode_char()` excluding sleep | Yes (pytest) |
+| UI interaction response | < 100 ms | Manual (click → visual feedback) | No |
+| Idle RAM (0 tabs) | < 200 MB | `psutil.Process().memory_info().rss` after 60s idle | Yes (pytest) |
+| Idle CPU (0 tabs) | < 2% | `psutil.Process().cpu_percent(interval=60)` | Yes (pytest) |
+
+---
+
+# 18. Dependency Rules and Import Boundaries
+
+## 18.1 Allowed Import Matrix
+
+| Source Package | May Import From |
+|---|---|
+| `src/main.py` | `src/app` |
+| `src/app.py` | `src/core/*`, `src/ui/main_window`, `src/ui/splash_screen`, `src/version` |
+| `src/models/*` | `pydantic`, `datetime`, `uuid`, `enum`, Python stdlib only |
+| `src/platform/*` | `ctypes`, `pywin32`, Python stdlib, PySide6 (Qt types only for struct definitions) |
+| `src/storage/*` | `sqlite3`, `json`, `src/models/*`, `src/platform/file_utils` (if needed) |
+| `src/core/*` | `src/models/*`, `src/storage/*`, `src/platform/*` |
+| `src/browser/*` | `src/models/*`, `src/storage/*`, `src/platform/*`, `src/core/events`, `src/core/protocols` |
+| `src/clipboard/*` | `src/models/*`, `src/storage/*`, `src/core/events`, `src/core/protocols` |
+| `src/typing/*` | `src/models/*`, `src/platform/*`, `src/core/events`, `src/core/protocols` |
+| `src/ui/*` | `src/models/*`, `src/core/*`, `src/browser/*`, `src/clipboard/*`, `src/typing/*` |
+
+## 18.2 Forbidden Import Matrix
+
+| Source Package | Must NEVER Import From | Reason |
+|---|---|---|
+| `src/models/*` | Any `src/` package | Models are pure data; no logic dependencies |
+| `src/platform/*` | `src/core/*`, `src/browser/*`, `src/clipboard/*`, `src/typing/*`, `src/ui/*`, `src/storage/*` | Platform is the bottom layer |
+| `src/storage/*` | `src/core/*`, `src/browser/*`, `src/clipboard/*`, `src/typing/*`, `src/ui/*` | Data layer doesn't know about business logic |
+| `src/core/*` | `src/ui/*` | Core must not reference UI |
+| `src/browser/*` | `src/clipboard/*`, `src/typing/*` | Domain modules are independent |
+| `src/clipboard/*` | `src/browser/*`, `src/typing/*` | Domain modules are independent |
+| `src/typing/*` | `src/browser/*`, `src/clipboard/*` | Domain modules are independent |
+| Any module | `src/ui/main_window` (except `src/app.py`) | MainWindow is a leaf consumer |
+
+## 18.3 CI Enforcement
+
+```toml
+# pyproject.toml
+[tool.importlinter]
+root_package = "src"
+
+[[tool.importlinter.contracts]]
+name = "Layered architecture"
+type = "layers"
+layers = ["ui", "core", "browser|clipboard|typing", "storage", "platform", "models"]
+
+[[tool.importlinter.contracts]]
+name = "Domain module independence"
+type = "independence"
+modules = ["src.browser", "src.clipboard", "src.typing"]
+```
+
+---
+
+# 19. Coding Conventions Enforcement
+
+## 19.1 `pyproject.toml` Configuration
+
+```toml
+[project]
+name = "batmanoverlay"
+requires-python = ">=3.11"
+
+[tool.ruff]
+line-length = 99
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B", "SIM", "C4", "RUF"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+
+[[tool.mypy.overrides]]
+module = "PySide6.*"
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+
+[tool.coverage.run]
+source = ["src"]
+omit = ["src/platform/*"]   # Platform wrappers are tested via integration
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+```
+
+## 19.2 Pre-Commit Hooks
+
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.4.0
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+```
+
+---
+
+# 20. Implementation Order
+
+## Phase 1: Foundation (Weeks 1–3)
+
+| Order | Module | Dependency | Deliverables |
+|---|---|---|---|
+| 1.1 | `src/version.py` | None | Version string |
+| 1.2 | `src/constants.py` | None | All constants, enums |
+| 1.3 | `src/models/*` (all 9 files) | pydantic only | All data models with unit tests |
+| 1.4 | `src/core/exceptions.py` | None | Exception hierarchy |
+| 1.5 | `src/core/protocols.py` | models | All protocol definitions |
+| 1.6 | `src/platform/win_api.py` | ctypes | ctypes struct definitions |
+| 1.7 | `src/platform/input_simulator.py` | win_api | InputSimulator + unit tests (mocked) |
+| 1.8 | `src/platform/hotkey_registry.py` | win_api | HotkeyRegistry + unit tests (mocked) |
+| 1.9 | `src/platform/system_info.py` | ctypes | System query functions |
+| 1.10 | `src/storage/file_utils.py` | stdlib | File utilities + unit tests |
+| 1.11 | `src/storage/json_store.py` | file_utils | JsonStore + unit tests |
+| 1.12 | `src/storage/database.py` | sqlite3 | DatabaseManager + unit tests |
+| 1.13 | `src/storage/migrations/*` | database | MigrationRunner + migration scripts + tests |
+
+**Phase 1 gate:** All models pass mypy strict. All storage tests pass. All platform mocks verified.
+
+## Phase 2: Core Services (Weeks 4–6)
+
+| Order | Module | Dependency | Deliverables |
+|---|---|---|---|
+| 2.1 | `src/core/logger.py` | loguru, constants | setup_logging() + tests |
+| 2.2 | `src/core/events.py` | PySide6 | AppSignals class |
+| 2.3 | `src/core/config_manager.py` | json_store, models/settings | ConfigManager + unit tests |
+| 2.4 | `src/core/session_manager.py` | json_store, models/session | SessionManager + unit tests |
+| 2.5 | `src/core/workspace_manager.py` | database, json_store, models/workspace | WorkspaceManager + unit tests |
+| 2.6 | `src/core/hotkey_manager.py` | hotkey_registry, events, protocols | HotkeyManager + unit tests |
+| 2.7 | `src/core/search_engine.py` | protocols, events | SearchEngine + unit tests |
+| 2.8 | `src/core/notification_manager.py` | events | NotificationManager + unit tests |
+| 2.9 | `src/core/theme_manager.py` | PySide6, config_manager | ThemeManager + unit tests |
+| 2.10 | `src/core/accessibility_manager.py` | PySide6, config_manager | AccessibilityManager + unit tests |
+| 2.11 | `src/core/update_manager.py` | urllib, version | UpdateManager + unit tests |
+| 2.12 | `src/core/performance_monitor.py` | psutil (optional) | PerformanceMonitor + unit tests |
+
+**Phase 2 gate:** All core services pass unit tests. Config load/save round-trip verified. Session crash/recovery verified. Workspace CRUD verified.
+
+## Phase 3: Domain Modules (Weeks 7–10)
+
+Can be developed in parallel by separate developers:
+
+### Track A: Clipboard (1 developer)
+
+| Order | Module | Deliverables |
+|---|---|---|
+| 3A.1 | `src/clipboard/clipboard_store.py` | ClipboardStore + unit tests |
+| 3A.2 | `src/clipboard/category_manager.py` | CategoryManager + unit tests |
+| 3A.3 | `src/clipboard/clipboard_manager.py` | ClipboardManager + unit tests |
+
+### Track B: Typing (1 developer)
+
+| Order | Module | Deliverables |
+|---|---|---|
+| 3B.1 | `src/typing/speed_controller.py` | SpeedController + unit tests |
+| 3B.2 | `src/typing/typing_queue.py` | TypingQueue + unit tests |
+| 3B.3 | `src/typing/typing_engine.py` | TypingEngine + unit tests (state machine) |
+
+### Track C: Browser (1 developer)
+
+| Order | Module | Deliverables |
+|---|---|---|
+| 3C.1 | `src/browser/browser_profile.py` | BrowserProfileManager + unit tests |
+| 3C.2 | `src/browser/browser_widget.py` | BrowserWidget + unit tests |
+| 3C.3 | `src/browser/context_menu.py` | BrowserContextMenu |
+| 3C.4 | `src/browser/tab_manager.py` | TabManager + unit tests |
+| 3C.5 | `src/browser/navigation_manager.py` | NavigationManager + unit tests |
+| 3C.6 | `src/browser/address_bar.py` | AddressBar |
+| 3C.7 | `src/browser/bookmark_manager.py` | BookmarkManager + unit tests |
+| 3C.8 | `src/browser/download_manager.py` | DownloadManager + unit tests |
+| 3C.9 | `src/browser/history_manager.py` | HistoryManager + unit tests |
+
+**Phase 3 gate:** All domain module unit tests pass. Integration tests for clipboard→typing pipeline pass. Workspace lifecycle integration test passes.
+
+## Phase 4: Presentation Layer (Weeks 11–13)
+
+| Order | Module | Deliverables |
+|---|---|---|
+| 4.1 | `src/ui/icons.py` | IconManager |
+| 4.2 | `src/ui/toast.py` | ToastWidget, ToastManager |
+| 4.3 | `src/ui/dialogs.py` | ConfirmDialog, ErrorDialog, RecoveryDialog |
+| 4.4 | `src/ui/title_bar.py` | TitleBar |
+| 4.5 | `src/ui/sidebar.py` | Sidebar, SidebarButton |
+| 4.6 | `src/ui/status_bar.py` | StatusBar |
+| 4.7 | `src/ui/splash_screen.py` | SplashScreen |
+| 4.8 | `src/ui/workspace_selector.py` | WorkspaceSelector |
+| 4.9 | `src/clipboard/clipboard_widget.py` | ClipboardWidget + UI tests |
+| 4.10 | `src/typing/typing_widget.py` | TypingWidget + UI tests |
+| 4.11 | `src/ui/settings_panel.py` | SettingsPanel + UI tests |
+| 4.12 | `src/ui/search_dialog.py` | SearchDialog + UI tests |
+| 4.13 | `src/ui/main_window.py` | MainWindow + UI tests |
+| 4.14 | `resources/themes/dark.qss` | Dark theme stylesheet |
+| 4.15 | `resources/themes/light.qss` | Light theme stylesheet |
+
+**Phase 4 gate:** All panels render. Panel switching works. Theme switching works. Keyboard navigation works.
+
+## Phase 5: Integration and Assembly (Weeks 14–15)
+
+| Order | Module | Deliverables |
+|---|---|---|
+| 5.1 | `src/app.py` | BatmanOverlayApp — wires all modules |
+| 5.2 | `src/main.py` | CLI entry point |
+| 5.3 | Signal wiring | Connect all AppSignals to handlers |
+| 5.4 | Integration tests | All 5 integration test scenarios pass |
+| 5.5 | Performance tests | All performance budgets met |
+| 5.6 | Accessibility audit | NVDA screen reader test pass |
+
+**Phase 5 gate:** Application boots, operates, and shuts down correctly. All integration tests pass. Performance budgets met.
+
+## Phase 6: Build and Release (Week 16)
+
+| Order | Task | Deliverables |
+|---|---|---|
+| 6.1 | `scripts/build.py` | PyInstaller configuration |
+| 6.2 | `scripts/release.py` | ZIP archive creation + SHA-256 hash |
+| 6.3 | Manual QA | 46-item checklist from PRD §20.7 |
+| 6.4 | `README.md` | User-facing documentation |
+| 6.5 | `CHANGELOG.md` | v1.0.0 release notes |
+| 6.6 | Final code signing (optional) | Signed `batmanoverlay.exe` |
+
+**Phase 6 gate:** Build produces portable folder. Application runs on clean Windows 10 and 11 machines. All 46 manual QA items pass.
+
+---
+
+> [!IMPORTANT]
+> This Technical Design Specification is the implementation contract for batmanoverlay v1.0. Every module, interface, signal, error code, and test case defined here is mandatory. Deviations require a written amendment with tech lead approval and updated traceability to the PRD and SAD.
+
+---
+
+*End of Technical Design Specification*
+
+**Document Status:** Draft — Pending Engineering Review
+**Next Action:** Engineering team review → TDS approval → Sprint planning begins (Phase 1)

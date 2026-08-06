@@ -1,0 +1,22 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Source files use LF
+*.py text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.qss text eol=lf
+*.toml text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+
+# Batch files use CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary files
+*.png binary
+*.ico binary
+*.ttf binary
+*.woff2 binary
+*.bmw binary

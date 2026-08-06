@@ -1,0 +1,2585 @@
+# batmanoverlay — Software Architecture Document
+
+> **Document Version:** 1.0.0
+> **Date:** 2026-08-07
+> **Status:** Draft — Pending Engineering Review
+> **Classification:** Internal — Engineering
+> **Author:** Principal Software Architect
+> **Upstream Dependency:** batmanoverlay PRD v1.0.0 (LOCKED, APPROVED)
+
+---
+
+## Document Control
+
+| Field | Value |
+|---|---|
+| Product Name | batmanoverlay |
+| Document Type | Software Architecture Document (SAD) |
+| PRD Reference | batmanoverlay PRD v1.0.0 |
+| Target Audience | Engineering Team, Tech Leads, QA Engineers |
+| Architecture Style | Layered, Event-Driven, Modular Monolith |
+
+---
+
+## Table of Contents
+
+1. [Executive Technical Overview](#1-executive-technical-overview)
+2. [High-Level Architecture](#2-high-level-architecture)
+3. [Folder Structure](#3-folder-structure)
+4. [Module Breakdown](#4-module-breakdown)
+5. [Component Interaction](#5-component-interaction)
+6. [State Management](#6-state-management)
+7. [Threading Model](#7-threading-model)
+8. [Storage Architecture](#8-storage-architecture)
+9. [Browser Architecture](#9-browser-architecture)
+10. [Typing Engine Architecture](#10-typing-engine-architecture)
+11. [Clipboard Architecture](#11-clipboard-architecture)
+12. [Workspace Architecture](#12-workspace-architecture)
+13. [Logging Architecture](#13-logging-architecture)
+14. [Configuration System](#14-configuration-system)
+15. [Error Handling Strategy](#15-error-handling-strategy)
+16. [Security Architecture](#16-security-architecture)
+17. [Performance Architecture](#17-performance-architecture)
+18. [Testing Architecture](#18-testing-architecture)
+19. [Dependency Graph](#19-dependency-graph)
+20. [Class Responsibilities](#20-class-responsibilities)
+21. [Design Patterns](#21-design-patterns)
+22. [Future Extension Points](#22-future-extension-points)
+23. [Architecture Risks](#23-architecture-risks)
+24. [Engineering Decision Log (ADR)](#24-engineering-decision-log-adr)
+25. [Development Readiness Checklist](#25-development-readiness-checklist)
+
+---
+
+# 1. Executive Technical Overview
+
+## 1.1 Architecture Philosophy
+
+batmanoverlay is architected as a **layered, event-driven, modular monolith** — a single deployable unit composed of loosely coupled modules that communicate via Qt Signals/Slots. This approach is chosen over microservices (inappropriate for a desktop app), a plugin architecture (premature for v1.0), or a monolithic blob (unmaintainable).
+
+The philosophy is:
+
+1. **Layered isolation.** Each layer depends only on the layer beneath it. The UI layer never touches SQLite directly; the data access layer never emits UI signals.
+2. **Event-driven decoupling.** Modules communicate through typed signals rather than direct method calls across boundaries. This enables independent testing, safe cross-thread communication, and future plugin hooks.
+3. **Protocol-oriented interfaces.** Module boundaries are defined by Python `Protocol` classes (structural typing). Concrete implementations can be swapped for testing or future refactoring without changing callers.
+4. **Data gravity.** Data models (Pydantic) are shared vocabulary. They flow downward through layers and upward through signals. No raw dictionaries cross module boundaries.
+5. **Fail-safe defaults.** Every component initializes to a safe, functional state. Missing configuration files are regenerated from defaults. Corrupted databases fall back to empty state with user notification.
+
+## 1.2 Design Principles
+
+| Principle | Application |
+|---|---|
+| **Single Responsibility** | Each module owns one domain. `ClipboardManager` manages clipboard logic; `ClipboardStore` manages clipboard persistence. They are separate classes. |
+| **Dependency Inversion** | High-level modules depend on abstractions (Protocols), not concrete implementations. `SearchEngine` depends on `SearchableSource` protocol, not `ClipboardStore` directly. |
+| **Open/Closed** | Modules are open for extension (new signal subscribers, new search sources) and closed for modification (adding a new panel doesn't change `MainWindow` internals). |
+| **Interface Segregation** | No module is forced to depend on methods it doesn't use. `WorkspaceManager` exposes a `WorkspaceProvider` protocol to `SessionManager`, not its full API. |
+| **Least Astonishment** | API methods behave as their names suggest. `typing_engine.pause()` pauses; it does not raise if already paused (idempotent). |
+| **Explicit Over Implicit** | Dependencies are constructor-injected, never imported as module-level singletons. Configuration is loaded explicitly, not cached globally. |
+
+## 1.3 Engineering Goals
+
+| Goal | Metric | Rationale |
+|---|---|---|
+| Compile-time safety | mypy strict mode passes on 100% of source | Catch type errors before runtime; enable IDE support |
+| Test coverage | ≥80% line coverage; ≥90% on core modules | Prevent regressions; enable refactoring confidence |
+| Startup speed | < 5 s cold, < 500 ms warm | User perception of responsiveness |
+| Memory efficiency | < 200 MB idle (0 tabs) | Coexist with IDEs and other heavy applications |
+| Module independence | Any module can be unit-tested in isolation with mocked dependencies | Parallel development across team members |
+| Zero-install deployment | Runs from a folder on any Windows 10+ machine without admin | Core portability requirement |
+
+## 1.4 Architectural Constraints
+
+| Constraint | Source | Impact |
+|---|---|---|
+| Python 3.11+ only | Technology decision (ADR-01) | All code uses 3.11+ syntax (match/case, tomllib, ExceptionGroups) |
+| PySide6 (Qt 6) + Qt WebEngine | Technology decision (ADR-02) | All UI is Qt widgets; browser is QWebEngineView; styles are QSS |
+| No admin privileges | Security requirement (PRD §NG-07) | Cannot use `kernel32.dll` calls requiring elevation; cannot write to `C:\Windows`, `C:\Program Files`, or `HKLM` registry |
+| No network communication except user-initiated browser traffic | Security/Privacy requirement | No telemetry, no analytics, no background sync; update check is the sole exception (HTTPS GET, opt-in) |
+| Portable data storage | PRD §FR-AC-07 | All data in `./data/` relative to executable; no AppData, no registry, no temp (except OS-mandated Chromium internals) |
+| No process injection, hooking, or memory manipulation | Security requirement (PRD §15.2) | `SendInput` is the only cross-process API used; it is a standard Windows input API |
+| Single-threaded UI | Qt requirement | All widget operations on the main thread; background work via QThread/QThreadPool with signal-based callbacks |
+
+---
+
+# 2. High-Level Architecture
+
+## 2.1 System Layers
+
+The application is organized into five layers. Each layer has a strict dependency direction: downward only.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                       PRESENTATION LAYER                        │
+│  MainWindow │ TitleBar │ Sidebar │ StatusBar │ Panels │ Dialogs │
+├─────────────────────────────────────────────────────────────────┤
+│                      APPLICATION LAYER                          │
+│  WorkspaceManager │ SessionManager │ HotkeyManager │ SearchEngine│
+│  ConfigManager │ NotificationManager │ UpdateManager             │
+├─────────────────────────────────────────────────────────────────┤
+│                        DOMAIN LAYER                             │
+│  ClipboardManager │ TypingEngine │ TabManager │ BookmarkManager  │
+│  NavigationManager │ DownloadManager │ BrowserProfileManager     │
+├─────────────────────────────────────────────────────────────────┤
+│                      DATA ACCESS LAYER                          │
+│  DatabaseManager │ JsonStore │ FileSystemManager │ MigrationRunner│
+├─────────────────────────────────────────────────────────────────┤
+│                       PLATFORM LAYER                            │
+│  WinApi (SendInput, RegisterHotKey) │ Qt Framework │ SQLite │ OS │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## 2.2 Layer Responsibilities
+
+| Layer | Responsibility | May Depend On | Must NOT Depend On |
+|---|---|---|---|
+| **Presentation** | Render UI, capture user input, display state, animations | Application, Domain (read-only), Models | Data Access, Platform directly |
+| **Application** | Orchestrate cross-cutting workflows, lifecycle management, coordination | Domain, Data Access, Models, Platform | Presentation |
+| **Domain** | Implement business logic for each feature area | Data Access, Models, Platform | Presentation, Application |
+| **Data Access** | Read/write persistent storage (SQLite, JSON, filesystem) | Models, Platform | Presentation, Application, Domain |
+| **Platform** | Thin wrappers around OS APIs and third-party libraries | OS, stdlib | Everything above |
+
+## 2.3 Module Boundaries and Communication Flow
+
+```mermaid
+graph TB
+    subgraph "Presentation Layer"
+        MW["MainWindow"]
+        TB["TitleBar"]
+        SB["Sidebar"]
+        STB["StatusBar"]
+        BrP["BrowserPanel"]
+        ClP["ClipboardPanel"]
+        TyP["TypingPanel"]
+        SetP["SettingsPanel"]
+        SrD["SearchDialog"]
+        Toast["ToastManager"]
+    end
+
+    subgraph "Application Layer"
+        WM["WorkspaceManager"]
+        SM["SessionManager"]
+        CM["ConfigManager"]
+        HM["HotkeyManager"]
+        SE["SearchEngine"]
+        NM["NotificationManager"]
+        UM["UpdateManager"]
+        TM_["ThemeManager"]
+        AM["AccessibilityManager"]
+        PM["PerformanceMonitor"]
+    end
+
+    subgraph "Domain Layer"
+        TbM["TabManager"]
+        NavM["NavigationManager"]
+        BPM["BrowserProfileManager"]
+        BkM["BookmarkManager"]
+        DlM["DownloadManager"]
+        ClM["ClipboardManager"]
+        TyE["TypingEngine"]
+        TyQ["TypingQueue"]
+    end
+
+    subgraph "Data Access Layer"
+        DB["DatabaseManager"]
+        JS["JsonStore"]
+        FS["FileSystemManager"]
+        MR["MigrationRunner"]
+    end
+
+    subgraph "Platform Layer"
+        WA["WinApi"]
+        QT["Qt / PySide6"]
+        SQ["SQLite3"]
+    end
+
+    MW --> SB & TB & STB & BrP & ClP & TyP & SetP
+    MW -.->|signal| WM
+    MW -.->|signal| SM
+
+    BrP --> TbM & NavM
+    ClP --> ClM
+    TyP --> TyE & TyQ
+    SetP --> CM
+    SrD --> SE
+
+    WM --> BPM & DB & JS
+    SM --> JS & WM
+    HM --> WA
+    CM --> JS
+    SE --> ClM & BkM & TbM
+    TM_ --> QT
+    NM --> Toast
+
+    TbM --> BPM & NavM
+    ClM --> DB
+    TyE --> WA
+    BkM --> DB
+    DlM --> FS
+
+    DB --> SQ
+    JS --> FS
+    MR --> SQ
+
+    WA --> QT
+```
+
+> [!NOTE]
+> Dotted arrows (`-.->`) represent signal-based (asynchronous, decoupled) communication. Solid arrows (`-->`) represent direct method call dependencies (synchronous, coupled).
+
+---
+
+# 3. Folder Structure
+
+## 3.1 Complete Production Hierarchy
+
+```
+batmanoverlay/
+├── src/
+│   ├── __init__.py
+│   ├── main.py
+│   ├── app.py
+│   ├── constants.py
+│   ├── version.py
+│   │
+│   ├── core/
+│   │   ├── __init__.py
+│   │   ├── protocols.py
+│   │   ├── events.py
+│   │   ├── exceptions.py
+│   │   ├── config_manager.py
+│   │   ├── session_manager.py
+│   │   ├── workspace_manager.py
+│   │   ├── hotkey_manager.py
+│   │   ├── search_engine.py
+│   │   ├── notification_manager.py
+│   │   ├── update_manager.py
+│   │   ├── theme_manager.py
+│   │   ├── accessibility_manager.py
+│   │   ├── performance_monitor.py
+│   │   └── logger.py
+│   │
+│   ├── browser/
+│   │   ├── __init__.py
+│   │   ├── browser_widget.py
+│   │   ├── tab_manager.py
+│   │   ├── navigation_manager.py
+│   │   ├── address_bar.py
+│   │   ├── bookmark_manager.py
+│   │   ├── download_manager.py
+│   │   ├── browser_profile.py
+│   │   ├── context_menu.py
+│   │   └── history_manager.py
+│   │
+│   ├── clipboard/
+│   │   ├── __init__.py
+│   │   ├── clipboard_manager.py
+│   │   ├── clipboard_store.py
+│   │   ├── clipboard_widget.py
+│   │   └── category_manager.py
+│   │
+│   ├── typing/
+│   │   ├── __init__.py
+│   │   ├── typing_engine.py
+│   │   ├── typing_queue.py
+│   │   ├── typing_widget.py
+│   │   ├── speed_controller.py
+│   │   └── input_simulator.py
+│   │
+│   ├── ui/
+│   │   ├── __init__.py
+│   │   ├── main_window.py
+│   │   ├── title_bar.py
+│   │   ├── sidebar.py
+│   │   ├── status_bar.py
+│   │   ├── splash_screen.py
+│   │   ├── search_dialog.py
+│   │   ├── settings_panel.py
+│   │   ├── workspace_selector.py
+│   │   ├── toast.py
+│   │   ├── dialogs.py
+│   │   └── icons.py
+│   │
+│   ├── models/
+│   │   ├── __init__.py
+│   │   ├── clipboard_entry.py
+│   │   ├── workspace.py
+│   │   ├── session.py
+│   │   ├── settings.py
+│   │   ├── bookmark.py
+│   │   ├── typing_job.py
+│   │   ├── hotkey.py
+│   │   ├── search_result.py
+│   │   └── notification.py
+│   │
+│   ├── storage/
+│   │   ├── __init__.py
+│   │   ├── database.py
+│   │   ├── json_store.py
+│   │   ├── file_utils.py
+│   │   └── migrations/
+│   │       ├── __init__.py
+│   │       ├── runner.py
+│   │       ├── v001_initial.py
+│   │       └── v002_history_fts.py
+│   │
+│   └── platform/
+│       ├── __init__.py
+│       ├── win_api.py
+│       ├── input_simulator.py
+│       ├── hotkey_registry.py
+│       └── system_info.py
+│
+├── resources/
+│   ├── icons/
+│   ├── fonts/
+│   ├── themes/
+│   │   ├── dark.qss
+│   │   └── light.qss
+│   └── images/
+│
+├── tests/
+│   ├── conftest.py
+│   ├── unit/
+│   ├── integration/
+│   ├── ui/
+│   ├── performance/
+│   └── fixtures/
+│
+├── scripts/
+│   ├── build.py
+│   ├── lint.py
+│   └── release.py
+│
+├── data/                          # RUNTIME ONLY — gitignored
+│   ├── config/
+│   ├── workspaces/
+│   ├── logs/
+│   ├── sessions/
+│   └── session.lock
+│
+├── pyproject.toml
+├── requirements.txt
+├── requirements-dev.txt
+├── README.md
+├── LICENSE
+├── CHANGELOG.md
+└── .gitignore
+```
+
+## 3.2 Folder Rules
+
+| Folder | Purpose | What Belongs | What Must NEVER Be Placed Here |
+|---|---|---|---|
+| `src/` | All production source code | Python modules organized by architectural layer | Tests, scripts, resources, data files |
+| `src/core/` | Application-layer services shared across features | Managers, protocols, events, exceptions, logging setup | UI widgets, domain-specific business logic, direct SQLite queries |
+| `src/browser/` | Embedded browser domain logic | Tab lifecycle, navigation, bookmarks, downloads, profile isolation | UI layout code (that goes in `ui/`), clipboard logic |
+| `src/clipboard/` | Smart clipboard domain logic | Clipboard CRUD, search, categorization, storage | Browser code, typing code, UI layout |
+| `src/typing/` | Typing engine domain logic | SendInput dispatch, queue management, speed control | Browser code, clipboard code |
+| `src/ui/` | Shared presentation-layer widgets | Windows, panels, dialogs, bars, toasts, icon loading | Business logic, database queries, OS API calls |
+| `src/models/` | Pydantic data models — shared vocabulary | Model classes only; no logic beyond validation | Database queries, UI code, business rules |
+| `src/storage/` | Data access layer | SQLite management, JSON I/O, file utilities, migrations | Business logic, UI code, OS API calls |
+| `src/platform/` | Thin OS API wrappers | ctypes/pywin32 wrappers for SendInput, RegisterHotKey, system queries | Business logic, UI code, data access |
+| `resources/` | Static bundled assets | Icons (SVG), fonts (TTF), QSS themes, images (PNG/SVG) | Python code, data files, user configuration |
+| `tests/` | All test code | Test modules, fixtures, conftest | Production code |
+| `scripts/` | Build and CI scripts | PyInstaller config, lint runners, release automation | Production code, test code |
+| `data/` | Runtime user data (gitignored) | Workspaces, config, logs, sessions | Source code, resources, tests |
+
+---
+
+# 4. Module Breakdown
+
+## 4.1 Application Core (`main.py`, `app.py`)
+
+**Purpose:** Entry point and application lifecycle orchestration.
+
+**Responsibilities:**
+- Parse CLI arguments (`--version`, `--workspace`, `--debug`)
+- Initialize `QApplication` with proper attributes (high DPI, organization name)
+- Orchestrate the boot sequence (logger → config → session → workspace → UI)
+- Install global exception handler
+- Manage graceful shutdown
+
+**Dependencies:** `core/logger`, `core/config_manager`, `core/session_manager`, `ui/main_window`, `ui/splash_screen`
+
+**Public Interface:**
+
+```python
+# main.py
+def main(argv: list[str]) -> int:
+    """Application entry point. Returns exit code."""
+
+# app.py
+class BatmanOverlayApp(QApplication):
+    def __init__(self, argv: list[str]) -> None: ...
+    def boot(self) -> None: ...
+    def shutdown(self) -> None: ...
+    def data_dir(self) -> Path: ...
+```
+
+**Lifecycle:**
+1. `main()` parses argv; handles `--version` early exit
+2. Constructs `BatmanOverlayApp`
+3. `boot()` → Logger → ConfigManager → SessionManager → WorkspaceManager → SplashScreen → MainWindow
+4. Enters Qt event loop (`app.exec()`)
+5. On exit signal → `shutdown()` → save session → unregister hotkeys → close DB → delete lock file
+
+**Error Handling:** Global exception hook via `sys.excepthook` → log CRITICAL → show error dialog → attempt graceful shutdown
+
+**Unit Tests:** CLI argument parsing, boot sequence order (mocked deps), graceful shutdown sequence, exception handler
+
+---
+
+## 4.2 Window Manager (`ui/main_window.py`)
+
+**Purpose:** Compose the main application window layout and manage panel switching.
+
+**Responsibilities:**
+- Create and own the title bar, sidebar, content area, and status bar
+- Manage panel visibility (browser, clipboard, typing, bookmarks, settings)
+- Handle always-on-top, opacity, collapse/expand, pin, resize, and drag
+- Persist and restore window geometry per workspace
+- Coordinate with WorkspaceManager on workspace switches
+
+**Dependencies:** `ui/title_bar`, `ui/sidebar`, `ui/status_bar`, all panel widgets, `core/workspace_manager`, `core/config_manager`
+
+**Public Interface:**
+
+```python
+class MainWindow(QMainWindow):
+    # Signals
+    panel_changed = Signal(str)         # panel_name
+    geometry_changed = Signal(object)   # WindowGeometry model
+
+    def __init__(self, app_context: AppContext) -> None: ...
+    def switch_panel(self, panel_name: str) -> None: ...
+    def set_always_on_top(self, enabled: bool) -> None: ...
+    def set_opacity(self, value: float) -> None: ...  # 0.1 – 1.0
+    def collapse(self) -> None: ...
+    def expand(self) -> None: ...
+    def set_pinned(self, pinned: bool) -> None: ...
+    def apply_geometry(self, geometry: WindowGeometry) -> None: ...
+    def capture_geometry(self) -> WindowGeometry: ...
+    def set_workspace_name(self, name: str) -> None: ...
+```
+
+**Internal Classes:**
+- `_PanelStack` — manages stacked widget for panel switching
+- `_GeometryGuard` — debounces geometry save events (200ms)
+
+**Lifecycle:** Created during boot after splash; destroyed on shutdown
+
+**Error Handling:** Geometry restoration failures → fall back to default position and size; notify via StatusBar
+
+**Unit Tests:** Panel switching, opacity clamping (10%–100%), always-on-top toggle, collapse/expand state transitions, geometry save/restore round-trip
+
+---
+
+## 4.3 Browser Engine (`browser/browser_widget.py`)
+
+**Purpose:** Wrap `QWebEngineView` with batmanoverlay-specific customizations.
+
+**Responsibilities:**
+- Create and configure `QWebEnginePage` and `QWebEngineProfile`
+- Handle page lifecycle events (load started, load finished, load failed)
+- Inject custom context menu (including "Copy to Smart Clipboard")
+- Forward navigation events to `NavigationManager`
+- Forward download requests to `DownloadManager`
+
+**Dependencies:** `PySide6.QtWebEngineWidgets`, `browser/context_menu`, `core/events`
+
+**Public Interface:**
+
+```python
+class BrowserWidget(QWebEngineView):
+    # Signals
+    text_selected_for_clipboard = Signal(str, str, str)  # text, url, title
+    page_loaded = Signal(str, str)                        # url, title
+    page_load_failed = Signal(str, int)                   # url, error_code
+
+    def __init__(self, profile: QWebEngineProfile, parent: QWidget = None) -> None: ...
+    def navigate_to(self, url: str) -> None: ...
+    def selected_text(self) -> str: ...
+    def current_url(self) -> str: ...
+    def current_title(self) -> str: ...
+    def zoom_factor(self) -> float: ...
+    def set_zoom_factor(self, factor: float) -> None: ...
+    def find_text(self, text: str, forward: bool = True) -> None: ...
+```
+
+**Lifecycle:** Created per tab; destroyed when tab is closed or workspace is switched
+
+**Error Handling:** `renderProcessTerminated` signal → log error → show in-tab error page → offer reload
+
+**Unit Tests:** URL navigation (mocked engine), context menu construction, signal emission on load events
+
+---
+
+## 4.4 Tab Manager (`browser/tab_manager.py`)
+
+**Purpose:** Manage the lifecycle of browser tabs within a workspace.
+
+**Responsibilities:**
+- Create, close, reorder, and switch tabs
+- Maintain tab bar widget
+- Support lazy loading (restore tab metadata without loading content)
+- Track per-tab state (URL, title, zoom, scroll position, loading status)
+- Enforce maximum tab limit (soft: 20, hard: 50)
+
+**Dependencies:** `browser/browser_widget`, `browser/browser_profile`, `core/events`
+
+**Public Interface:**
+
+```python
+class TabManager(QObject):
+    # Signals
+    tab_created = Signal(int, str)     # tab_id, url
+    tab_closed = Signal(int)           # tab_id
+    tab_activated = Signal(int)        # tab_id
+    tab_count_changed = Signal(int)    # count
+
+    def __init__(self, profile_manager: BrowserProfileManager, parent: QObject = None) -> None: ...
+    def create_tab(self, url: str = "", activate: bool = True) -> int: ...
+    def close_tab(self, tab_id: int) -> None: ...
+    def activate_tab(self, tab_id: int) -> None: ...
+    def active_tab(self) -> int | None: ...
+    def tab_count(self) -> int: ...
+    def all_tabs(self) -> list[TabState]: ...
+    def restore_tabs(self, tab_states: list[TabState]) -> None: ...
+    def close_all_tabs(self) -> None: ...
+```
+
+**Internal Classes:**
+- `TabState` — dataclass holding tab_id, url, title, zoom, is_loaded, is_suspended
+- `_TabBarWidget` — custom QTabBar with close buttons, overflow scrolling
+
+**Lifecycle:** Created when workspace is activated; all tabs closed when workspace is deactivated
+
+**Error Handling:** Tab crash → close crashed tab → show notification → offer reopen
+
+**Unit Tests:** Tab creation/closure ordering, lazy loading (tab restored but not loaded until activated), maximum tab enforcement, tab state serialization
+
+---
+
+## 4.5 Navigation Manager (`browser/navigation_manager.py`)
+
+**Purpose:** Handle back/forward/refresh/stop navigation for the active browser tab.
+
+**Responsibilities:**
+- Forward navigation commands to the active `BrowserWidget`
+- Track navigation history per tab (back/forward stack depth)
+- Update address bar on navigation events
+- Record page visits in browser history
+
+**Dependencies:** `browser/browser_widget`, `browser/address_bar`, `browser/history_manager`
+
+**Public Interface:**
+
+```python
+class NavigationManager(QObject):
+    url_changed = Signal(str)          # new_url
+    can_go_back_changed = Signal(bool)
+    can_go_forward_changed = Signal(bool)
+    loading_changed = Signal(bool)     # is_loading
+
+    def go_back(self) -> None: ...
+    def go_forward(self) -> None: ...
+    def refresh(self) -> None: ...
+    def stop(self) -> None: ...
+    def navigate_to(self, url: str) -> None: ...
+    def set_active_widget(self, widget: BrowserWidget) -> None: ...
+```
+
+**Unit Tests:** Navigation state tracking, URL normalization, history recording
+
+---
+
+## 4.6 Clipboard Manager (`clipboard/clipboard_manager.py`)
+
+**Purpose:** Implement all business logic for the smart clipboard.
+
+**Responsibilities:**
+- Add entries (from browser context menu or hotkey)
+- Delete entries (single, bulk) with 30-second undo
+- Pin/unpin entries
+- Assign/remove categories
+- Add/edit notes
+- Search via full-text search
+- Enforce soft entry limit with auto-archival
+- Export entries (plain text, CSV, JSON)
+
+**Dependencies:** `clipboard/clipboard_store`, `models/clipboard_entry`, `core/events`
+
+**Public Interface:**
+
+```python
+class ClipboardManager(QObject):
+    entry_added = Signal(object)       # ClipboardEntry
+    entry_deleted = Signal(str)        # entry_id
+    entry_updated = Signal(object)     # ClipboardEntry
+    entries_bulk_deleted = Signal(list) # list[str] entry_ids
+
+    def __init__(self, store: ClipboardStoreProtocol) -> None: ...
+    def add_entry(self, text: str, source_url: str = "", source_title: str = "") -> ClipboardEntry: ...
+    def delete_entry(self, entry_id: str) -> UndoToken: ...
+    def bulk_delete(self, entry_ids: list[str]) -> UndoToken: ...
+    def undo_delete(self, token: UndoToken) -> None: ...
+    def pin_entry(self, entry_id: str) -> None: ...
+    def unpin_entry(self, entry_id: str) -> None: ...
+    def set_note(self, entry_id: str, note: str) -> None: ...
+    def set_categories(self, entry_id: str, category_ids: list[str]) -> None: ...
+    def search(self, query: str, limit: int = 50) -> list[ClipboardEntry]: ...
+    def get_all(self, sort: SortOrder = SortOrder.RECENCY, limit: int = 100, offset: int = 0) -> list[ClipboardEntry]: ...
+    def get_entry(self, entry_id: str) -> ClipboardEntry | None: ...
+    def entry_count(self) -> int: ...
+    def export_entries(self, entry_ids: list[str], format: ExportFormat) -> str: ...
+```
+
+**Internal Classes:**
+- `UndoToken` — holds deleted entries for 30-second undo; auto-expires via QTimer
+- `_ArchivalWorker` — runs on QThreadPool to archive old entries when soft limit is exceeded
+
+**Error Handling:** Storage errors → catch `ClipboardStorageError` → retry once → notify user via toast → queue in memory
+
+**Unit Tests:** CRUD operations, undo lifecycle (create → delete → undo → verify restored), search accuracy (FTS5 ranking), bulk delete, auto-archival trigger, export format correctness
+
+---
+
+## 4.7 Typing Engine (`typing/typing_engine.py`)
+
+**Purpose:** Execute character-by-character keyboard simulation on a background thread.
+
+**Responsibilities:**
+- Accept a `TypingJob` and execute it on a dedicated `QThread`
+- Implement the typing state machine: `IDLE → COUNTDOWN → TYPING → PAUSED → TYPING → COMPLETED/CANCELLED`
+- Call `SendInput` (via platform layer) for each character with configurable delay and jitter
+- Handle Unicode characters via `KEYEVENTF_UNICODE`
+- Handle special characters: newline (Enter), tab (Tab)
+- Emit progress signals to the UI thread
+- Respect pause/resume/cancel commands from the main thread
+
+**Dependencies:** `platform/input_simulator`, `typing/speed_controller`, `models/typing_job`, `core/events`
+
+**Public Interface:**
+
+```python
+class TypingEngine(QObject):
+    # Signals (emitted from worker thread, queued to main thread)
+    countdown_tick = Signal(int)       # seconds_remaining
+    typing_started = Signal(object)    # TypingJob
+    typing_progress = Signal(int, int) # chars_done, chars_total
+    typing_paused = Signal(object)     # TypingJob
+    typing_resumed = Signal(object)    # TypingJob
+    typing_cancelled = Signal(object)  # TypingJob
+    typing_completed = Signal(object)  # TypingJob
+    typing_error = Signal(object, str) # TypingJob, error_message
+
+    def __init__(self, input_simulator: InputSimulatorProtocol, speed_controller: SpeedController) -> None: ...
+    def start(self, job: TypingJob) -> None: ...
+    def pause(self) -> None: ...
+    def resume(self) -> None: ...
+    def cancel(self) -> None: ...
+    def state(self) -> TypingState: ...
+    def is_active(self) -> bool: ...
+    def current_job(self) -> TypingJob | None: ...
+```
+
+**Internal Classes:**
+- `_TypingWorker(QThread)` — the actual thread that calls `SendInput` in a loop
+- `TypingState(Enum)` — IDLE, COUNTDOWN, TYPING, PAUSED, COMPLETED, CANCELLED, ERROR
+
+**State Machine:**
+
+```
+                 start()
+    IDLE ─────────────────► COUNTDOWN
+                                │
+                            tick (3,2,1)
+                                │
+                                ▼
+                            TYPING ◄────── resume()
+                           /   |   \
+                      pause() done  error
+                         /     |      \
+                        ▼      ▼       ▼
+                    PAUSED  COMPLETED  ERROR
+                       |
+                    cancel()
+                       |
+                       ▼
+                   CANCELLED
+```
+
+**Lifecycle:** Created once; persists for the application lifetime; worker thread is created/destroyed per job
+
+**Error Handling:** `SendInput` failure → catch → emit `typing_error` → auto-pause → notify user
+
+**Unit Tests:** State machine transitions (all valid and invalid paths), speed calibration accuracy, jitter distribution (statistical test over 1K samples), Unicode character handling, newline/tab mapping, cancel during countdown
+
+---
+
+## 4.8 Workspace Manager (`core/workspace_manager.py`)
+
+**Purpose:** Manage the lifecycle of workspaces and orchestrate state isolation.
+
+**Responsibilities:**
+- CRUD operations on workspaces (create, rename, duplicate, delete)
+- Switch active workspace (save current state → load target state)
+- Manage the "Default" workspace (cannot be deleted)
+- Export/import workspace archives (`.bmw` format)
+- Coordinate with BrowserProfileManager for per-workspace Chromium profiles
+
+**Dependencies:** `storage/database`, `storage/json_store`, `browser/browser_profile`, `models/workspace`, `core/events`
+
+**Public Interface:**
+
+```python
+class WorkspaceManager(QObject):
+    workspace_created = Signal(object)    # Workspace
+    workspace_renamed = Signal(str, str)  # old_name, new_name
+    workspace_deleted = Signal(str)       # workspace_name
+    workspace_switching = Signal(str)     # target_workspace_name
+    workspace_switched = Signal(object)   # Workspace (new active)
+
+    def __init__(self, data_dir: Path, profile_manager: BrowserProfileManager) -> None: ...
+    def create(self, name: str) -> Workspace: ...
+    def rename(self, old_name: str, new_name: str) -> None: ...
+    def duplicate(self, source_name: str, new_name: str) -> Workspace: ...
+    def delete(self, name: str) -> None: ...
+    def switch(self, name: str) -> Workspace: ...
+    def active(self) -> Workspace: ...
+    def list_all(self) -> list[WorkspaceSummary]: ...
+    def export_workspace(self, name: str, output_path: Path) -> None: ...
+    def import_workspace(self, archive_path: Path) -> Workspace: ...
+    def workspace_dir(self, name: str) -> Path: ...
+```
+
+**Error Handling:** Duplicate name → raise `WorkspaceError`; Delete default → raise `WorkspaceError`; Import validation failure → raise `WorkspaceError` with details
+
+**Unit Tests:** CRUD lifecycle, rename filesystem side effects, duplicate deep copy verification, default workspace protection, switch serialization/deserialization, export/import round-trip, invalid name validation
+
+---
+
+## 4.9 Settings Manager (`core/config_manager.py`)
+
+**Purpose:** Load, validate, persist, and distribute application settings.
+
+**Responsibilities:**
+- Load settings from JSON on startup; validate with Pydantic
+- Apply default values for missing fields (schema migration)
+- Save on change (debounced: 500ms)
+- Emit change signals for dependent modules
+- Support per-section and global reset to defaults
+- Provide typed access to all setting values
+
+**Dependencies:** `storage/json_store`, `models/settings`, `core/events`
+
+**Public Interface:**
+
+```python
+class ConfigManager(QObject):
+    config_changed = Signal(str, object)  # key_path, new_value
+
+    def __init__(self, config_dir: Path) -> None: ...
+    def get(self, key_path: str, default: Any = None) -> Any: ...
+    def set(self, key_path: str, value: Any) -> None: ...
+    def get_section(self, section: str) -> dict: ...
+    def reset_section(self, section: str) -> None: ...
+    def reset_all(self) -> None: ...
+    def settings(self) -> AppSettings: ...  # Full Pydantic model
+    def validate(self) -> list[ValidationError]: ...
+```
+
+**Internal Behavior:**
+- On load: read JSON → validate with `AppSettings` Pydantic model → fill defaults → save back if modified
+- On set: validate value → update in-memory model → schedule debounced disk write → emit signal
+- Schema versioning: `settings.json` contains a `"version"` field; if version < current, apply migration transforms
+
+**Unit Tests:** Load with missing fields (defaults applied), load with invalid values (clamped), set with validation (rejects out-of-range), reset correctness, schema migration from v1 → v2
+
+---
+
+## 4.10 Storage Manager (`storage/database.py`)
+
+**Purpose:** Manage SQLite database connections and provide transactional access.
+
+**Responsibilities:**
+- Open/close SQLite databases per workspace
+- Enable WAL mode and foreign keys on connect
+- Run schema migrations on first access
+- Provide context-managed transactional access
+- Connection pooling (one connection per thread per database)
+
+**Dependencies:** `sqlite3` (stdlib), `storage/migrations/runner`
+
+**Public Interface:**
+
+```python
+class DatabaseManager:
+    def __init__(self, db_path: Path) -> None: ...
+    def connect(self) -> None: ...
+    def close(self) -> None: ...
+    def execute(self, sql: str, params: tuple = ()) -> sqlite3.Cursor: ...
+    def executemany(self, sql: str, params_seq: Iterable[tuple]) -> sqlite3.Cursor: ...
+    def transaction(self) -> ContextManager: ...  # Context manager for BEGIN/COMMIT/ROLLBACK
+    def is_connected(self) -> bool: ...
+
+    @contextmanager
+    def transaction(self) -> Generator[sqlite3.Connection, None, None]:
+        """Yields a connection within a transaction. Commits on success, rolls back on error."""
+```
+
+**Connection Strategy:**
+- One `DatabaseManager` instance per database file
+- Thread-local connections (`threading.local()`) for thread safety
+- Connections created lazily on first access per thread
+- WAL mode enabled immediately after connection open
+
+**Unit Tests:** Connection lifecycle, WAL mode verification, transaction commit/rollback, migration execution order, concurrent access (multi-threaded)
+
+---
+
+## 4.11 Session Manager (`core/session_manager.py`)
+
+**Purpose:** Protect user state from loss through auto-save and crash recovery.
+
+**Responsibilities:**
+- Auto-save session at configurable intervals (default: 60s) via QTimer
+- Save session on graceful shutdown
+- Detect crashes via PID lock file
+- Offer session recovery on restart after crash
+- Export/import full session backups
+
+**Dependencies:** `core/workspace_manager`, `storage/json_store`, `models/session`
+
+**Public Interface:**
+
+```python
+class SessionManager(QObject):
+    session_saved = Signal()
+    crash_detected = Signal()          # Previous crash found
+    session_restored = Signal()
+
+    def __init__(self, data_dir: Path, workspace_manager: WorkspaceManagerProtocol) -> None: ...
+    def start_auto_save(self, interval_seconds: int = 60) -> None: ...
+    def stop_auto_save(self) -> None: ...
+    def save_now(self) -> None: ...
+    def check_crash(self) -> bool: ...     # Returns True if crash detected
+    def recover_session(self) -> SessionData | None: ...
+    def acquire_lock(self) -> None: ...
+    def release_lock(self) -> None: ...
+    def export_session(self, output_path: Path) -> None: ...
+    def import_session(self, archive_path: Path) -> None: ...
+```
+
+**Crash Detection Protocol:**
+1. On startup: check `data/session.lock`
+2. If file exists → read PID → check if PID is running (`psutil` or `ctypes` `OpenProcess`)
+3. PID not running → crash → emit `crash_detected` → present recovery dialog
+4. PID running → another instance → show warning dialog
+5. Write current PID to lock file
+6. On graceful shutdown → delete lock file
+
+**Auto-Save Logic:**
+- QTimer fires every `interval_seconds` * 1000 ms
+- Check dirty flag (set on any state change)
+- If dirty → serialize session → atomic write → clear dirty flag
+- If not dirty → skip (no-op)
+
+**Unit Tests:** Lock file creation/deletion, crash detection with stale PID, auto-save dirty flag optimization, session serialization/deserialization round-trip
+
+---
+
+## 4.12 Logging System (`core/logger.py`)
+
+**Purpose:** Configure structured, leveled logging via Loguru.
+
+**Responsibilities:**
+- Configure Loguru sinks (file with rotation, optional stderr for dev)
+- Set log level based on configuration / CLI flag
+- Provide module-scoped logger access
+- Ensure privacy (no content, credentials, or PII logged)
+
+**Dependencies:** `loguru`, `core/config_manager` (optional, for log level override)
+
+**Public Interface:**
+
+```python
+def setup_logging(data_dir: Path, debug: bool = False) -> None:
+    """Configure Loguru. Call once during boot."""
+
+# Usage in any module:
+from loguru import logger
+logger.info("Tab opened", tab_id=3, url="https://...")
+```
+
+**Configuration:**
+- File sink: `data/logs/batmanoverlay.log`, rotation 10 MB, retention 5, compression gzip
+- Format: `{time:YYYY-MM-DDTHH:mm:ss.SSSZ} | {level:<8} | {module}:{function}:{line} | {message}`
+- Default level: INFO (production), DEBUG (if `--debug` flag)
+- Filter: custom filter that strips any field named `text`, `password`, `token`, `cookie` from structured context
+
+**Unit Tests:** Log file creation, rotation trigger, format verification, privacy filter (ensure text content is stripped)
+
+---
+
+## 4.13 Notification System (`core/notification_manager.py`)
+
+**Purpose:** Central coordinator for user-facing notifications.
+
+**Responsibilities:**
+- Accept notification requests from any module
+- Route to appropriate display: toast, status bar, or modal dialog
+- Manage toast queue (max 3 visible, FIFO)
+- Support notification actions (clickable buttons in toasts)
+
+**Dependencies:** `ui/toast`, `ui/status_bar`, `ui/dialogs`
+
+**Public Interface:**
+
+```python
+class NotificationManager(QObject):
+    def __init__(self) -> None: ...
+    def info(self, message: str, duration_ms: int = 5000) -> None: ...
+    def warning(self, message: str, duration_ms: int = 8000) -> None: ...
+    def error(self, message: str, actions: list[NotificationAction] | None = None) -> None: ...
+    def critical(self, title: str, message: str) -> None: ...  # Modal
+    def status(self, message: str) -> None: ...                  # Status bar only
+```
+
+**Unit Tests:** Toast queuing, auto-dismiss timing, action callback invocation
+
+---
+
+## 4.14 Theme Manager (`core/theme_manager.py`)
+
+**Purpose:** Manage theme loading, switching, and system theme detection.
+
+**Responsibilities:**
+- Load QSS theme files from `resources/themes/`
+- Apply theme to the QApplication
+- Detect Windows system theme (dark/light) via registry or Qt API
+- Support "System" mode that auto-switches on OS theme change
+- Apply accent color customization
+
+**Dependencies:** `PySide6.QtWidgets.QApplication`, resource files, `core/config_manager`
+
+**Public Interface:**
+
+```python
+class ThemeManager(QObject):
+    theme_changed = Signal(str)  # "dark" | "light"
+
+    def __init__(self, app: QApplication, resources_dir: Path) -> None: ...
+    def apply_theme(self, theme_name: str) -> None: ...  # "dark", "light", "system"
+    def current_theme(self) -> str: ...
+    def set_accent_color(self, color: str) -> None: ...
+    def set_font_scale(self, scale: float) -> None: ...
+```
+
+**Unit Tests:** Theme file loading, QSS variable substitution, accent color injection, font scale application
+
+---
+
+## 4.15 Shortcut Manager (`core/hotkey_manager.py`)
+
+**Purpose:** Register and manage global (system-wide) keyboard shortcuts.
+
+**Responsibilities:**
+- Register hotkeys with Windows via `RegisterHotKey` API
+- Unregister hotkeys on shutdown or reconfiguration
+- Detect conflicts and report to user
+- Dispatch hotkey events to the application via signals
+- Support master enable/disable toggle
+- Process `WM_HOTKEY` messages from the Windows message loop
+
+**Dependencies:** `platform/hotkey_registry`, `core/events`, `core/config_manager`
+
+**Public Interface:**
+
+```python
+class HotkeyManager(QObject):
+    hotkey_triggered = Signal(str)      # action_name
+    hotkey_conflict = Signal(str, str)  # action_name, key_combo
+
+    def __init__(self, registry: HotkeyRegistryProtocol) -> None: ...
+    def register_all(self, bindings: dict[str, str]) -> None: ...
+    def register(self, action: str, key_combo: str) -> bool: ...
+    def unregister(self, action: str) -> None: ...
+    def unregister_all(self) -> None: ...
+    def set_enabled(self, enabled: bool) -> None: ...
+    def is_enabled(self) -> bool: ...
+    def update_binding(self, action: str, new_key_combo: str) -> bool: ...
+```
+
+**Implementation Detail:**
+- A hidden native window (`HWND`) is created to receive `WM_HOTKEY` messages
+- A Qt native event filter processes these messages and emits signals
+- Each hotkey gets a unique integer ID for `RegisterHotKey`/`UnregisterHotKey`
+
+**Unit Tests:** Register/unregister lifecycle (mocked WinAPI), conflict detection, master toggle, message dispatch
+
+---
+
+## 4.16 Accessibility Manager (`core/accessibility_manager.py`)
+
+**Purpose:** Coordinate accessibility features across the application.
+
+**Responsibilities:**
+- Detect screen reader presence (NVDA, JAWS) via UI Automation API
+- Configure Qt accessibility properties on all widgets
+- Manage high contrast mode detection and stylesheet override
+- Announce dynamic state changes to screen readers
+- Coordinate with ThemeManager for reduced-motion setting
+
+**Dependencies:** `PySide6.QtGui.QAccessible`, `core/config_manager`, `core/theme_manager`
+
+**Public Interface:**
+
+```python
+class AccessibilityManager(QObject):
+    screen_reader_detected = Signal(bool)
+
+    def __init__(self, config: ConfigManagerProtocol) -> None: ...
+    def is_screen_reader_active(self) -> bool: ...
+    def announce(self, message: str) -> None: ...
+    def set_high_contrast(self, enabled: bool) -> None: ...
+    def is_high_contrast(self) -> bool: ...
+    def is_reduced_motion(self) -> bool: ...
+```
+
+**Unit Tests:** Screen reader detection (mocked), announcement calls, high contrast state
+
+---
+
+## 4.17 Update Manager (`core/update_manager.py`)
+
+**Purpose:** Check for application updates via GitHub Releases API.
+
+**Responsibilities:**
+- On startup (if enabled), make HTTPS GET to GitHub Releases API
+- Parse version from response; compare with local version
+- If newer version available, emit signal for UI to show notification
+- No auto-download, no auto-install, no code execution
+
+**Dependencies:** `urllib.request` (stdlib) or `PySide6.QtNetwork`, `src/version.py`
+
+**Public Interface:**
+
+```python
+class UpdateManager(QObject):
+    update_available = Signal(str, str)  # new_version, download_url
+
+    def __init__(self, current_version: str, check_enabled: bool = True) -> None: ...
+    def check_for_updates(self) -> None: ...  # Async, non-blocking
+```
+
+**Security:** HTTPS only; no code execution from response; timeout: 10s; fail silently on network error
+
+**Unit Tests:** Version comparison logic, response parsing, network failure handling (silent)
+
+---
+
+## 4.18 Crash Recovery (`core/session_manager.py` — integrated)
+
+Crash recovery is integrated into `SessionManager` (§4.11) rather than being a separate module. This is a deliberate architectural choice — crash recovery is a sub-responsibility of session management, and separating them would create circular dependencies (crash recovery needs session data; session management needs crash detection).
+
+**Recovery Flow:**
+1. SessionManager.check_crash() detects stale lock file
+2. Emit `crash_detected` signal
+3. UI shows recovery dialog: "batmanoverlay didn't shut down properly. Would you like to restore your previous session?"
+4. If yes → `recover_session()` → load last saved session → restore workspaces
+5. If no → create fresh session → clean lock file
+
+---
+
+## 4.19 Configuration Manager
+
+Covered in §4.9 (Settings Manager). `ConfigManager` is the single configuration authority.
+
+---
+
+## 4.20 Performance Monitor (`core/performance_monitor.py`)
+
+**Purpose:** Track and report runtime performance metrics.
+
+**Responsibilities:**
+- Measure startup time (boot → interactive)
+- Track memory usage (RSS) via `psutil` or `ctypes`
+- Track active tab count and total renderer memory
+- Periodically sample CPU usage
+- Log metrics at INFO level for diagnostics
+- Expose metrics for StatusBar display (optional, debug mode)
+
+**Dependencies:** `psutil` (optional, graceful degradation if not available), `core/logger`
+
+**Public Interface:**
+
+```python
+class PerformanceMonitor(QObject):
+    metrics_updated = Signal(object)  # PerformanceMetrics
+
+    def __init__(self) -> None: ...
+    def start(self) -> None: ...
+    def stop(self) -> None: ...
+    def mark_startup_complete(self) -> None: ...
+    def current_metrics(self) -> PerformanceMetrics: ...
+```
+
+**Unit Tests:** Startup time measurement, metric sampling interval
+
+---
+
+# 5. Component Interaction
+
+## 5.1 Allowed Dependencies (Directed)
+
+```
+Presentation → Application → Domain → Data Access → Platform
+```
+
+Within each layer, the following cross-module dependencies are allowed:
+
+| From | To | Reason |
+|---|---|---|
+| ClipboardPanel | ClipboardManager | UI reads/writes clipboard data |
+| TypingPanel | TypingEngine, TypingQueue | UI controls typing |
+| BrowserPanel | TabManager, NavigationManager | UI renders browser |
+| SettingsPanel | ConfigManager | UI reads/writes settings |
+| SearchDialog | SearchEngine | UI displays search results |
+| WorkspaceManager | BrowserProfileManager | Workspace switch changes browser profile |
+| WorkspaceManager | DatabaseManager | Workspace creates/opens databases |
+| SessionManager | WorkspaceManager | Session captures workspace state |
+| SearchEngine | ClipboardManager, BookmarkManager, TabManager | Search indexes multiple sources |
+| HotkeyManager | TypingEngine, ClipboardManager | Hotkey triggers actions |
+| ConfigManager | ThemeManager | Config change triggers theme switch |
+
+## 5.2 Forbidden Dependencies
+
+| From | To | Reason |
+|---|---|---|
+| **Any module** | `ui/main_window` | No module may reference the main window directly; communicate via signals |
+| `storage/*` | `core/*`, `browser/*`, `clipboard/*`, `typing/*` | Data layer must not know about business logic |
+| `platform/*` | Anything above Platform layer | Platform wrappers are pure utilities |
+| `models/*` | Anything except stdlib and Pydantic | Models are passive data containers |
+| `browser/*` | `clipboard/*` | Browser does not depend on clipboard; communication is via signals through events |
+| `browser/*` | `typing/*` | Browser does not depend on typing engine |
+| `typing/*` | `clipboard/*` | Typing engine receives `TypingJob` objects; it doesn't know about clipboard |
+| `typing/*` | `browser/*` | Typing engine is browser-agnostic |
+| `clipboard/*` | `browser/*` | Clipboard receives text via signal; doesn't import browser |
+
+## 5.3 Initialization Order
+
+```
+1.  Logger              ← First: all subsequent modules log
+2.  ConfigManager       ← Second: all modules read config
+3.  ThemeManager        ← Third: apply theme before any UI renders
+4.  AccessibilityMgr    ← Fourth: configure a11y before UI
+5.  DatabaseManager     ← Fifth: open databases for active workspace
+6.  WorkspaceManager    ← Sixth: determine active workspace
+7.  SessionManager      ← Seventh: check for crash, manage lock file
+8.  BrowserProfileMgr   ← Eighth: create/load Chromium profile for active workspace
+9.  ClipboardManager    ← Ninth: load clipboard data for active workspace
+10. TypingEngine        ← Tenth: initialize (IDLE state)
+11. HotkeyManager       ← Eleventh: register global hotkeys
+12. SearchEngine        ← Twelfth: index data from clipboard, bookmarks
+13. NotificationManager ← Thirteenth: ready to display notifications
+14. UpdateManager       ← Fourteenth: check for updates (async, non-blocking)
+15. PerformanceMonitor  ← Fifteenth: start metric collection
+16. MainWindow          ← Last: construct and show UI
+```
+
+## 5.4 Shutdown Order (Reverse of Init)
+
+```
+1.  MainWindow          ← Hide window first (user perception)
+2.  PerformanceMonitor  ← Stop metrics
+3.  UpdateManager       ← Cancel pending checks
+4.  HotkeyManager       ← Unregister all hotkeys
+5.  TypingEngine        ← Cancel active typing; wait for worker thread
+6.  SessionManager      ← Save final session; release lock
+7.  SearchEngine        ← Close indexes
+8.  ClipboardManager    ← Flush pending writes
+9.  BrowserProfileMgr   ← Let Chromium flush cookies/cache
+10. WorkspaceManager    ← Save workspace state
+11. DatabaseManager     ← Close all connections
+12. NotificationManager ← Dismiss toasts
+13. ConfigManager       ← Flush pending config writes
+14. ThemeManager        ← No-op
+15. AccessibilityMgr    ← No-op
+16. Logger              ← Log "Graceful shutdown completed"; flush; close sinks
+```
+
+> [!IMPORTANT]
+> The typing engine worker thread MUST be joined (with a 5-second timeout) before proceeding with shutdown. If the timeout expires, the thread is abandoned (daemon thread) and a warning is logged.
+
+---
+
+# 6. State Management
+
+## 6.1 State Tiers
+
+| Tier | Scope | Lifetime | Storage | Access Pattern | Examples |
+|---|---|---|---|---|---|
+| **Application State** | Global | Survives workspace switch and restart | JSON files in `data/config/` | Read on boot, write on change | Theme, hotkeys, download dir, update prefs, font scale |
+| **Workspace State** | Per-workspace | Survives restart, isolated between workspaces | JSON + SQLite in `data/workspaces/<name>/` | Read on workspace activate, write on change | Browser tabs, clipboard entries, typing settings, window geometry |
+| **Session State** | Global | Survives restart (if saved); lost on crash (up to last auto-save) | JSON in `data/sessions/` | Read on boot, write periodically | Active workspace, window states, typing queue |
+| **Transient State** | In-memory | Lost on shutdown | Python objects, Qt widget properties | Read/write constantly | Current typing progress, search query, hover states, animation state, selected clipboard entry |
+
+## 6.2 State Flow Diagram
+
+```
+┌──────────────────────────────────────────────────────────┐
+│                    USER ACTION                            │
+│  (click, hotkey, type, drag, switch workspace, etc.)      │
+└──────────────┬───────────────────────────────────────────┘
+               │
+               ▼
+┌──────────────────────────────────────────────────────────┐
+│                    UI EVENT HANDLER                        │
+│  Validate input → Update transient state → Emit signal    │
+└──────────────┬───────────────────────────────────────────┘
+               │ Signal
+               ▼
+┌──────────────────────────────────────────────────────────┐
+│                    MANAGER / ENGINE                        │
+│  Process business logic → Update domain state             │
+│  → Emit result signal → Trigger persistence               │
+└──────────┬─────────────────────────────┬─────────────────┘
+           │ Signal                      │ Direct call
+           ▼                             ▼
+┌──────────────────────┐    ┌──────────────────────────────┐
+│       UI UPDATE       │    │    DATA ACCESS LAYER          │
+│  Update widget state  │    │  Write to SQLite/JSON (async) │
+│  Animate transition   │    │  Set dirty flag for auto-save │
+└──────────────────────┘    └──────────────────────────────┘
+```
+
+## 6.3 State Restoration
+
+On application startup:
+
+1. **ConfigManager** loads `data/config/settings.json` → Application State restored
+2. **SessionManager** checks for crash → if crash, offer recovery
+3. **SessionManager** loads `data/sessions/session.json` → Session State restored (active workspace, window geometry)
+4. **WorkspaceManager** activates the workspace from session → Workspace State loaded
+5. **TabManager** restores tab metadata from `browser/session.json` → tabs appear (lazy-loaded)
+6. **ClipboardManager** opens `clipboard/entries.db` → clipboard entries available
+7. **MainWindow** applies window geometry from session/workspace
+
+On workspace switch:
+
+1. Save current workspace state (tabs, geometry, clipboard changes)
+2. Deactivate current browser profile
+3. Load target workspace state
+4. Activate target browser profile
+5. Restore tabs (lazy-loaded)
+6. Switch clipboard database
+7. Apply target geometry
+8. Emit `workspace_switched` signal
+
+---
+
+# 7. Threading Model
+
+## 7.1 Thread Inventory
+
+| Thread | Type | Lifetime | Purpose | Communication |
+|---|---|---|---|---|
+| **Main (UI) Thread** | Qt Event Loop | Application lifetime | All UI rendering, user input, Qt event processing, signal/slot dispatch | Direct calls within thread; queued signals from other threads |
+| **Typing Worker** | `QThread` (subclass) | Per typing job | `SendInput` calls with timing delays | Signals to main thread (progress, state changes) |
+| **Auto-Save Worker** | `QThreadPool` task | Per save operation | Serialize session to disk | QTimer on main thread triggers; result via signal |
+| **Browser Renderer(s)** | Chromium subprocess | Per tab (managed by Qt WebEngine) | Render web pages | Qt WebEngine API (internal IPC) |
+| **Database Worker** | `QThreadPool` task | Per heavy query | Bulk clipboard operations, export, search | Result via signal or `QFuture` |
+| **Update Checker** | `QThreadPool` task | One-shot on startup | HTTPS GET to GitHub API | Result via signal |
+
+## 7.2 Thread Safety Rules
+
+1. **All Qt widget operations MUST execute on the main thread.** No exceptions. This is enforced by Qt's architecture.
+2. **Cross-thread communication uses Qt queued signals.** When a signal is emitted from a non-UI thread and connected to a slot on the UI thread, Qt automatically queues the call.
+3. **SQLite connections are thread-local.** Each thread gets its own connection via `threading.local()`. SQLite's WAL mode allows concurrent reads from multiple threads.
+4. **Shared state is protected by `threading.Lock` or `QMutex` where signals are insufficient.** This applies to the typing engine's state flag and the auto-save dirty flag.
+5. **Pydantic models are immutable once constructed.** Models are created on one thread and passed to another via signals. Since they're immutable (frozen=True), no locking is needed.
+
+## 7.3 Synchronization Strategy
+
+| Shared Resource | Protection | Justification |
+|---|---|---|
+| Typing engine state (`TypingState` enum) | `threading.Event` + `threading.Lock` | Worker thread reads; main thread writes (pause/resume/cancel) |
+| Auto-save dirty flag | `threading.Event` | Main thread sets; timer callback reads and clears |
+| Database connections | `threading.local()` | Each thread gets its own connection; no sharing |
+| Clipboard in-memory cache | Main thread only | ClipboardManager runs on main thread; no external access |
+| Configuration in-memory model | Main thread only | ConfigManager is main-thread only; changes emit signals |
+
+## 7.4 Deadlock Prevention
+
+1. **No nested locks.** Each module uses at most one lock. No module acquires a lock while holding another.
+2. **Lock acquisition timeout.** All lock acquisitions use `lock.acquire(timeout=5.0)`. If timeout expires, log ERROR and raise `DeadlockPreventionError`.
+3. **Signal-based communication over lock-based.** Preferred pattern is: worker thread emits signal → main thread processes → main thread emits response signal. No shared-memory contention.
+4. **No blocking calls on the main thread.** All potentially blocking operations (disk I/O, network) are dispatched to `QThreadPool`.
+5. **Worker thread join timeout.** On shutdown, worker threads are joined with a 5-second timeout. If the join times out, the thread is logged as abandoned.
+
+---
+
+# 8. Storage Architecture
+
+## 8.1 Storage Topology
+
+```
+data/
+├── config/                          # APPLICATION-LEVEL CONFIGURATION
+│   ├── settings.json                # App settings (Pydantic-validated)
+│   └── hotkeys.json                 # Hotkey bindings
+│
+├── workspaces/                      # PER-WORKSPACE DATA
+│   ├── default/                     # Default workspace (cannot be deleted)
+│   │   ├── meta.json                # Workspace metadata
+│   │   ├── browser/
+│   │   │   ├── profile/             # Chromium profile (cookies, cache, LevelDB)
+│   │   │   ├── session.json         # Open tabs, tab order, active tab
+│   │   │   ├── bookmarks.db         # SQLite: bookmarks + folders
+│   │   │   └── history.db           # SQLite: browser history + FTS5
+│   │   ├── clipboard/
+│   │   │   └── entries.db           # SQLite: clipboard entries + categories + FTS5
+│   │   ├── typing/
+│   │   │   └── settings.json        # Per-workspace typing preferences
+│   │   └── window/
+│   │       └── geometry.json        # Window position, size, opacity, collapsed, pinned
+│   └── <other_workspaces>/          # Same structure
+│
+├── sessions/
+│   └── session.json                 # Session state: active workspace, global window state
+│
+├── logs/
+│   ├── batmanoverlay.log            # Current log file
+│   ├── batmanoverlay.log.1.gz       # Rotated (compressed)
+│   └── ...
+│
+└── session.lock                     # PID lock file for crash detection
+```
+
+## 8.2 SQLite Configuration
+
+All SQLite databases are opened with:
+
+```python
+PRAGMA journal_mode = WAL;       # Write-Ahead Logging for concurrent reads
+PRAGMA foreign_keys = ON;        # Enforce referential integrity
+PRAGMA synchronous = NORMAL;     # Balance durability vs. performance
+PRAGMA cache_size = -8000;       # 8MB page cache per connection
+PRAGMA busy_timeout = 5000;      # Wait 5s on lock contention before failing
+```
+
+## 8.3 Schema Reference
+
+SQLite schemas are defined in the PRD (§13.2) and are replicated here by reference:
+
+- **Clipboard entries database:** `clipboard_entries`, `categories`, `entry_categories` tables + `clipboard_fts` FTS5 virtual table + sync triggers
+- **Bookmarks database:** `bookmarks`, `bookmark_folders` tables
+- **History database:** `browser_history` table + `history_fts` FTS5 virtual table
+
+All databases include a `schema_version` table for migration tracking.
+
+## 8.4 Migration Strategy
+
+```python
+class MigrationRunner:
+    """Applies pending schema migrations to a database."""
+
+    def __init__(self, db: DatabaseManager, migrations_dir: Path) -> None: ...
+
+    def run_pending(self) -> list[int]:
+        """
+        1. Read current version from schema_version table
+        2. Discover migration scripts in migrations_dir (v001_*.py, v002_*.py, ...)
+        3. Execute all scripts with version > current, in order
+        4. Update schema_version after each successful migration
+        5. Return list of applied version numbers
+        """
+```
+
+Migration scripts are Python modules with an `upgrade(conn: sqlite3.Connection)` function:
+
+```python
+# storage/migrations/v001_initial.py
+def upgrade(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS clipboard_entries (...);
+        CREATE VIRTUAL TABLE IF NOT EXISTS clipboard_fts USING fts5(...);
+        ...
+    """)
+```
+
+## 8.5 JSON Store
+
+```python
+class JsonStore:
+    """Atomic JSON file read/write."""
+
+    def read(self, path: Path, schema: type[BaseModel] | None = None) -> dict | BaseModel: ...
+    def write(self, path: Path, data: dict | BaseModel) -> None: ...
+    def write_atomic(self, path: Path, data: dict | BaseModel) -> None:
+        """
+        1. Serialize to JSON string
+        2. Write to path.with_suffix('.tmp')
+        3. os.replace(tmp_path, path)  # Atomic on NTFS
+        """
+```
+
+## 8.6 Backup Strategy
+
+| What | How | When |
+|---|---|---|
+| Workspace export | ZIP archive containing JSON + SQLite files (excluding browser profile for security) | User-initiated |
+| Session backup | JSON export of session state | User-initiated |
+| Auto-save | Session state written every 60s (configurable) | Automatic, periodic |
+| Crash recovery | Last auto-saved session is available for restoration | On restart after crash |
+
+## 8.7 Cache and Temporary Files
+
+| Cache | Location | Size Limit | Cleanup |
+|---|---|---|---|
+| Chromium disk cache | `data/workspaces/<name>/browser/profile/Cache/` | 200 MB (via `--disk-cache-size`) | Managed by Chromium; user can clear in settings |
+| FTS5 index | Inline in SQLite databases | Proportional to data | Rebuilt automatically by SQLite |
+| Log archives | `data/logs/*.gz` | 50 MB total (5 × 10 MB) | Loguru rotation/retention |
+
+---
+
+# 9. Browser Architecture
+
+## 9.1 Browser Lifecycle
+
+```
+┌─────────────────────────────────────────────────────┐
+│                 WORKSPACE ACTIVATION                 │
+│  1. WorkspaceManager.switch() called                 │
+│  2. BrowserProfileManager creates/loads profile      │
+│  3. TabManager restores tab metadata from session    │
+│  4. Active tab content is loaded (others are lazy)   │
+└─────────────────────────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────┐
+│                   NORMAL OPERATION                   │
+│  • User opens new tabs (TabManager.create_tab)       │
+│  • User navigates (NavigationManager.navigate_to)    │
+│  • Pages load via QWebEngineView                     │
+│  • Cookies/storage persist via profile               │
+│  • Downloads handled by DownloadManager              │
+│  • Context menu offers "Copy to Smart Clipboard"     │
+└─────────────────────────────────────────────────────┘
+                         │
+                         ▼
+┌─────────────────────────────────────────────────────┐
+│               WORKSPACE DEACTIVATION                 │
+│  1. TabManager saves tab metadata to session JSON    │
+│  2. Browser profile flushed (cookies written)        │
+│  3. Tab widgets destroyed (freeing renderer memory)  │
+└─────────────────────────────────────────────────────┘
+```
+
+## 9.2 Tab Creation and Destruction
+
+**Tab Creation:**
+1. `TabManager.create_tab(url, activate)` called
+2. Instantiate `BrowserWidget` with the workspace's `QWebEngineProfile`
+3. Add to internal tab registry (`dict[int, BrowserWidget]`)
+4. Add tab to tab bar widget
+5. If `activate=True`, switch to the new tab
+6. If URL is not empty, begin navigation
+7. Emit `tab_created` signal
+
+**Tab Destruction:**
+1. `TabManager.close_tab(tab_id)` called
+2. Check if this is the last tab → if yes, create a new blank tab first
+3. Remove from tab bar
+4. Disconnect all signals from the `BrowserWidget`
+5. Call `BrowserWidget.page().deleteLater()` (releases Chromium renderer)
+6. Call `BrowserWidget.deleteLater()`
+7. Remove from internal registry
+8. Emit `tab_closed` signal
+
+**Lazy Loading:**
+When restoring tabs from a session, tabs are created with metadata (URL, title) but NOT loaded. A placeholder page is shown: "Click to load this tab." When the user activates a lazy tab, `BrowserWidget.navigate_to(url)` is called to actually load the content.
+
+## 9.3 Cookie and Session Persistence
+
+- `QWebEngineProfile` is configured with a persistent storage path: `data/workspaces/<name>/browser/profile/`
+- Chromium stores cookies in `Cookies` (SQLite), local storage in `Local Storage/` (LevelDB), IndexedDB in `IndexedDB/`
+- Profile is NOT off-the-record (not incognito)
+- `QWebEngineProfile.setPersistentCookiesPolicy(AllowPersistentCookies)` is set
+- On workspace switch, the current profile is flushed before the new profile is loaded
+
+## 9.4 Downloads
+
+- `QWebEngineProfile.downloadRequested` signal is connected to `DownloadManager`
+- DownloadManager checks "ask before download" setting
+- If ask → show save-as dialog
+- If not ask → save to configured download directory
+- Progress tracked via `QWebEngineDownloadRequest` signals
+- Completed downloads shown as toast notification
+
+## 9.5 Authentication Flows
+
+Authentication is handled entirely by Chromium. The embedded browser:
+- Shows standard HTML login forms (ChatGPT, Claude, Notion)
+- Supports OAuth redirect flows (Google, GitHub)
+- Stores credentials via Chromium's credential store (DPAPI-encrypted)
+- batmanoverlay does NOT intercept, read, or modify authentication data
+
+---
+
+# 10. Typing Engine Architecture
+
+## 10.1 Typing Queue
+
+```python
+class TypingQueue(QObject):
+    """FIFO queue of TypingJob objects with reordering support."""
+
+    queue_changed = Signal()
+
+    def enqueue(self, job: TypingJob) -> None: ...
+    def dequeue(self) -> TypingJob | None: ...
+    def remove(self, job_id: str) -> None: ...
+    def reorder(self, job_id: str, new_index: int) -> None: ...
+    def peek(self) -> TypingJob | None: ...
+    def all_jobs(self) -> list[TypingJob]: ...
+    def clear(self) -> None: ...
+    def is_empty(self) -> bool: ...
+    def size(self) -> int: ...
+```
+
+The queue sits between ClipboardManager and TypingEngine. When the user clicks "Type This" on a clipboard entry, a `TypingJob` is created and enqueued. The TypingEngine dequeues jobs sequentially.
+
+## 10.2 Job Lifecycle
+
+```
+Created → Queued → [Wait for previous job to complete]
+    → Countdown (3...2...1...)
+    → Typing (character by character)
+    → Completed | Cancelled | Error
+```
+
+## 10.3 Speed Controller
+
+```python
+class SpeedController:
+    """Calculates delay between keystrokes based on speed level and jitter settings."""
+
+    SPEED_TABLE: dict[int, int] = {
+        1: 2000, 2: 1000, 3: 600, 4: 400, 5: 300,
+        6: 200, 7: 133, 8: 100, 9: 75, 10: 60
+    }
+
+    def __init__(self, speed_level: int = 5, jitter_enabled: bool = True, jitter_range: float = 0.15) -> None: ...
+
+    def delay_ms(self) -> int:
+        """Returns the delay for the next keystroke, including jitter."""
+        base = self.SPEED_TABLE[self._speed_level]
+        if self._jitter_enabled:
+            jitter = random.uniform(-self._jitter_range, self._jitter_range)
+            return max(10, int(base * (1 + jitter)))
+        return base
+
+    def estimated_time_ms(self, char_count: int) -> int:
+        """Returns estimated total typing time in ms (without jitter)."""
+        return self.SPEED_TABLE[self._speed_level] * char_count
+
+    def set_speed(self, level: int) -> None: ...
+```
+
+## 10.4 Input Simulation
+
+```python
+class InputSimulator:
+    """Thin wrapper around Windows SendInput API."""
+
+    def send_unicode_char(self, char: str) -> None:
+        """Send a single Unicode character via SendInput with KEYEVENTF_UNICODE."""
+
+    def send_key(self, vk_code: int) -> None:
+        """Send a virtual key press+release (for Enter, Tab, etc.)."""
+
+    def send_key_down(self, vk_code: int) -> None: ...
+    def send_key_up(self, vk_code: int) -> None: ...
+```
+
+**Character Classification:**
+- `\n` → `VK_RETURN` (Enter key simulation)
+- `\t` → `VK_TAB` (Tab key simulation)
+- All other characters → `KEYEVENTF_UNICODE` flag with `SendInput`
+
+## 10.5 Unicode Support
+
+The `KEYEVENTF_UNICODE` flag tells Windows to interpret the `wScan` field as a Unicode code point. This supports:
+- ASCII characters
+- Extended Latin (accents, diacritics)
+- CJK characters (Chinese, Japanese, Korean)
+- RTL scripts (Arabic, Hebrew)
+- Emoji (surrogate pairs — two `SendInput` calls for supplementary plane characters)
+
+For characters in the supplementary Unicode plane (U+10000 and above, including most emoji), the engine sends two `KEYEVENTF_UNICODE` events — one for each surrogate pair half. This is the standard Windows mechanism for typing emoji.
+
+## 10.6 Error Recovery
+
+| Error | Detection | Recovery |
+|---|---|---|
+| Target window closed | `GetForegroundWindow()` returns different HWND | Auto-pause; notify user; resume when user triggers |
+| SendInput returns 0 | Return value check | Log warning; retry once; if still fails, pause and notify |
+| Worker thread crash | `QThread.finished` signal without `typing_completed` | Emit `typing_error`; set state to IDLE; log CRITICAL |
+
+---
+
+# 11. Clipboard Architecture
+
+## 11.1 Data Flow
+
+```
+Browser (right-click → "Copy to Smart Clipboard" or Ctrl+Shift+C)
+    │
+    ▼
+ClipboardManager.add_entry(text, source_url, source_title)
+    │
+    ├── Create ClipboardEntry model (UUID, timestamp, char_count)
+    ├── ClipboardStore.insert(entry) → SQLite INSERT + FTS5 trigger
+    ├── Emit entry_added signal
+    └── Return ClipboardEntry
+         │
+         ▼
+    ClipboardWidget receives signal → Add to list view with animation
+    SearchEngine receives signal → Index updated automatically (FTS5)
+```
+
+## 11.2 Search Architecture
+
+Search uses SQLite FTS5 virtual tables with the following query strategy:
+
+```python
+def search(self, query: str, limit: int = 50) -> list[ClipboardEntry]:
+    """
+    1. Tokenize query
+    2. Build FTS5 MATCH expression (prefix search: each token gets *)
+    3. Query clipboard_fts with bm25() ranking
+    4. Join with clipboard_entries for full data
+    5. Sort: pinned first, then by bm25 rank
+    6. Limit results
+    """
+    fts_query = " ".join(f'"{token}"*' for token in query.split())
+    sql = """
+        SELECT e.*, bm25(clipboard_fts) as rank
+        FROM clipboard_entries e
+        JOIN clipboard_fts ON e.rowid = clipboard_fts.rowid
+        WHERE clipboard_fts MATCH ?
+        ORDER BY e.is_pinned DESC, rank
+        LIMIT ?
+    """
+```
+
+## 11.3 Undo Mechanism
+
+```python
+class UndoToken:
+    """Holds deleted entries for potential restoration."""
+
+    def __init__(self, entries: list[ClipboardEntry], expire_seconds: int = 30) -> None:
+        self._entries = entries
+        self._timer = QTimer()
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(self._expire)
+        self._timer.start(expire_seconds * 1000)
+        self._expired = False
+
+    def restore(self) -> list[ClipboardEntry]:
+        """Re-insert entries into the store."""
+        if self._expired:
+            raise UndoExpiredError()
+        self._timer.stop()
+        return self._entries
+
+    def _expire(self) -> None:
+        self._expired = True
+        self._entries.clear()  # Free memory
+```
+
+## 11.4 Auto-Archival
+
+When `entry_count()` exceeds `max_entries` (default: 10,000):
+1. Sort entries by `created_at` ascending
+2. Exclude pinned entries
+3. Delete oldest unpinned entries until count ≤ `max_entries`
+4. This runs as a background task on `QThreadPool` after each insert
+5. Debounced: runs at most once per minute
+
+## 11.5 Import/Export
+
+| Format | Implementation |
+|---|---|
+| Plain text | One entry per line, separated by `\n---\n` |
+| CSV | Columns: text, source_url, source_title, note, categories, created_at |
+| JSON | Array of `ClipboardEntry` serialized via Pydantic's `.model_dump(mode='json')` |
+
+---
+
+# 12. Workspace Architecture
+
+## 12.1 Workspace Lifecycle
+
+```
+CREATE → ACTIVE / INACTIVE → RENAME → DUPLICATE → DELETE
+                │
+                └── EXPORT ──── IMPORT
+```
+
+## 12.2 Workspace Switch Protocol
+
+This is the most complex state transition in the application. Steps:
+
+1. **Pre-switch validation:** Verify target workspace exists
+2. **Save current state:**
+   - TabManager → serialize open tabs to `browser/session.json`
+   - ClipboardManager → flush pending writes to SQLite
+   - MainWindow → capture geometry to `window/geometry.json`
+   - TypingEngine → if active, cancel current typing (user confirmed)
+3. **Deactivate current workspace:**
+   - Close all browser tabs (destroys renderer processes)
+   - Close clipboard SQLite connection
+   - Close bookmark/history SQLite connections
+4. **Activate target workspace:**
+   - Open target workspace's databases
+   - Load target browser profile
+   - Restore tabs from `browser/session.json` (lazy loading)
+   - Load clipboard entries
+   - Apply window geometry
+5. **Post-switch:**
+   - Update title bar and status bar
+   - Emit `workspace_switched` signal
+   - Log workspace switch
+
+**Performance target:** < 1 second for the full switch.
+
+## 12.3 Export/Import Format (`.bmw`)
+
+```
+workshop_a.bmw (ZIP, deflate compression)
+├── manifest.json          # Schema version, export timestamp, app version
+├── meta.json              # Workspace metadata
+├── clipboard/
+│   └── entries.db         # SQLite database
+├── browser/
+│   ├── session.json       # Tab metadata
+│   └── bookmarks.db       # SQLite database
+├── typing/
+│   └── settings.json
+└── window/
+    └── geometry.json
+```
+
+**Import validation:**
+1. Verify ZIP structure matches expected layout
+2. Read `manifest.json` → check schema version compatibility
+3. Verify each file exists and is within size limits (prevent zip bombs: max 100 MB)
+4. Validate JSON files against Pydantic schemas
+5. Test SQLite databases by opening and checking `schema_version`
+6. Generate unique workspace name if name conflicts with existing
+
+## 12.4 Conflict Resolution
+
+| Conflict | Resolution |
+|---|---|
+| Import name matches existing workspace | Append " (imported)" suffix; if still conflicts, append " (imported 2)", etc. |
+| Import schema version newer than current app | Reject with error: "This workspace was created with a newer version of batmanoverlay" |
+| Import schema version older than current app | Apply migrations during import |
+| Corrupted file in import archive | Reject entire import with specific error message |
+
+---
+
+# 13. Logging Architecture
+
+## 13.1 Log Levels and Usage
+
+| Level | Usage | Examples |
+|---|---|---|
+| `TRACE` | Ultra-verbose; individual keystroke timing, SQL queries | Not emitted in production |
+| `DEBUG` | Detailed operational events useful during development | Clipboard entry added, config loaded, hotkey registered |
+| `INFO` | Normal operational milestones | App start/stop, workspace switch, typing start/complete, tab open/close |
+| `WARNING` | Recoverable issues; user may need to act | Hotkey conflict, config validation fallback, disk space low |
+| `ERROR` | Failure in a subsystem; operation did not complete | Tab crash, clipboard save failed, database migration failed |
+| `CRITICAL` | Application-level failure; may need restart | Unhandled exception, database corruption, main window crash |
+
+## 13.2 Log Rotation and Retention
+
+| Parameter | Value |
+|---|---|
+| Max file size | 10 MB |
+| Max files | 5 (current + 4 rotated) |
+| Total disk budget | ~50 MB |
+| Compression | gzip for rotated files |
+| Rotation trigger | File size exceeds 10 MB |
+
+## 13.3 Production vs. Debug Mode
+
+| Setting | Production | Debug (`--debug`) |
+|---|---|---|
+| File sink level | INFO | DEBUG |
+| Console (stderr) sink | Disabled | Enabled at DEBUG |
+| SQL query logging | Disabled | Enabled at TRACE |
+| Performance timers | INFO (summary only) | DEBUG (individual operations) |
+
+---
+
+# 14. Configuration System
+
+## 14.1 Configuration Hierarchy
+
+```
+Defaults (hardcoded in AppSettings model)
+    ↑ overridden by
+Loaded from data/config/settings.json
+    ↑ overridden by
+CLI arguments (--debug, --workspace)
+```
+
+## 14.2 Settings Model (Pydantic)
+
+```python
+class AppSettings(BaseModel):
+    model_config = ConfigDict(frozen=False, validate_assignment=True)
+    version: int = 1
+
+    general: GeneralSettings = GeneralSettings()
+    typing: TypingSettings = TypingSettings()
+    appearance: AppearanceSettings = AppearanceSettings()
+    browser: BrowserSettings = BrowserSettings()
+    downloads: DownloadSettings = DownloadSettings()
+    clipboard: ClipboardSettings = ClipboardSettings()
+    accessibility: AccessibilitySettings = AccessibilitySettings()
+
+class TypingSettings(BaseModel):
+    default_speed: int = Field(default=5, ge=1, le=10)
+    pre_typing_delay: int = Field(default=3, ge=1, le=10)
+    jitter_enabled: bool = True
+    jitter_range: float = Field(default=0.15, ge=0.05, le=0.25)
+```
+
+## 14.3 Validation
+
+- Pydantic's `validate_assignment=True` ensures that invalid values are rejected at write time
+- On load, if a field fails validation, it is replaced with its default value and a WARNING is logged
+- If the entire file is unparseable (corrupted JSON), the file is backed up as `settings.json.bak` and regenerated from defaults
+
+## 14.4 Schema Migration
+
+```python
+CURRENT_SETTINGS_VERSION = 1
+
+def migrate_settings(data: dict) -> dict:
+    """Apply forward migrations to settings data."""
+    version = data.get("version", 0)
+
+    if version < 1:
+        # v0 → v1: add accessibility section
+        data.setdefault("accessibility", {})
+        data["version"] = 1
+
+    # Future: if version < 2: ...
+    return data
+```
+
+---
+
+# 15. Error Handling Strategy
+
+## 15.1 Error Classification
+
+| Class | Definition | Example | User Impact | Response |
+|---|---|---|---|---|
+| **Recoverable** | Operation failed but app can continue | Clipboard save failed | One operation lost | Retry → Toast notification |
+| **Degraded** | Feature unavailable but app runs | Hotkey conflict | Feature disabled | Toast notification with action |
+| **Fatal** | Application cannot continue safely | Database corruption | Session may be lost | Error dialog → Graceful shutdown |
+
+## 15.2 Retry Policy
+
+| Error Type | Max Retries | Backoff | Escalation |
+|---|---|---|---|
+| SQLite busy/locked | 3 | 100ms, 500ms, 2000ms | Toast: "Database busy" |
+| SendInput failure | 1 | Immediate | Pause typing; notify user |
+| Network timeout (update check) | 0 | N/A | Silent failure (not critical) |
+| JSON write failure | 2 | 200ms, 1000ms | Toast: "Save failed" |
+| Hotkey registration failure | 0 | N/A | Toast with alternative suggestion |
+
+## 15.3 Fallback Behavior
+
+| Failure | Fallback |
+|---|---|
+| Settings file corrupted | Regenerate from defaults; backup corrupted file |
+| Session file corrupted | Start fresh session; backup corrupted file |
+| Workspace database corrupted | Create empty database; notify user of data loss |
+| Browser profile corrupted | Delete profile directory; Chromium recreates on next load (user loses cookies) |
+| Font file missing | Fall back to system `Segoe UI` font |
+| Theme file missing | Apply hardcoded dark theme defaults |
+| Icon file missing | Show placeholder square |
+
+## 15.4 Graceful Shutdown
+
+On unrecoverable error:
+1. Log CRITICAL with full traceback
+2. Attempt to save session (best effort)
+3. Attempt to release lock file (best effort)
+4. Show error dialog: "batmanoverlay encountered an unexpected error. Your session has been saved. Please restart the application."
+5. Exit with code 1
+
+---
+
+# 16. Security Architecture
+
+## 16.1 Explicit Security Exclusion Confirmation
+
+> [!CAUTION]
+> This architecture does **NOT** include, and will **never** include:
+> - Stealth mechanisms (window hiding from screen capture, process name spoofing)
+> - Anti-detection capabilities (evading antivirus, proctoring, or anti-cheat systems)
+> - Process impersonation (mimicking svchost.exe, explorer.exe, or any system process)
+> - Screen capture bypass (WDA_EXCLUDEFROMCAPTURE or similar)
+> - Security circumvention of any kind (browser DRM, application hooks, memory manipulation)
+> - Privilege escalation (requesting admin, modifying UAC, token manipulation)
+> - Code injection (DLL injection, process hollowing, API hooking)
+>
+> The application process is named `batmanoverlay.exe`. It always appears in Task Manager with its real name. Its window is always visible and capturable by screen recording software.
+
+## 16.2 Defensive Security Measures
+
+| Measure | Implementation |
+|---|---|
+| **Input validation** | All external input validated via Pydantic models with strict type checking |
+| **URL sanitization** | Reject `javascript:` and `data:` URLs in address bar (Chromium also blocks these) |
+| **Workspace name sanitization** | Regex whitelist: `[a-zA-Z0-9 _-]{1,64}`; prevents path traversal |
+| **Import file validation** | ZIP structure check, size limits (100 MB max), schema validation before extraction |
+| **Atomic file writes** | Write to `.tmp` → `os.replace()` prevents corruption |
+| **No listening sockets** | Application does not open any TCP/UDP ports |
+| **No IPC server** | No named pipes, no shared memory, no COM objects exposed |
+| **Credential isolation** | Browser credentials managed entirely by Chromium (DPAPI-encrypted); app cannot read them |
+| **Log sanitization** | Custom Loguru filter strips `text`, `password`, `token`, `cookie` fields |
+| **Dependency pinning** | All dependencies pinned to exact versions in `requirements.txt` |
+| **Dependency auditing** | `pip-audit` in CI; fail build on known CVEs |
+
+---
+
+# 17. Performance Architecture
+
+## 17.1 Startup Optimization
+
+| Phase | Budget | Technique |
+|---|---|---|
+| Process start → Python ready | ~1.5s | PyInstaller bundles `.pyc`; minimize imports in `main.py` |
+| Python ready → Splash visible | ~300ms | Splash is the first widget; no other initialization before it |
+| Splash visible → Modules initialized | ~2s | Deferred init; only active workspace is loaded |
+| Modules ready → MainWindow visible | ~500ms | Window construction and first paint |
+| **Total** | **< 5s** | — |
+
+## 17.2 Memory Optimization
+
+| Technique | Expected Savings | Implementation |
+|---|---|---|
+| Lazy tab loading | ~100 MB per unloaded tab | Tab metadata only; load on activate |
+| Tab suspension (30 min idle) | ~100 MB per suspended tab | `QWebEnginePage.setLifecycleState(Discarded)` |
+| Virtual clipboard list | ~50 MB for 10K entries | `QAbstractListModel` + `QListView` (not QListWidget) |
+| Chromium cache cap | Bounded at 200 MB | `QTWEBENGINE_CHROMIUM_FLAGS` environment variable |
+| Deferred panel creation | ~20 MB | Settings, Bookmarks panels created on first access |
+
+## 17.3 Query Optimization
+
+| Query | Technique | Target |
+|---|---|---|
+| Clipboard FTS5 search | `MATCH` with prefix tokens; `bm25()` ranking | < 200ms for 10K entries |
+| Clipboard listing | Paginated: `LIMIT/OFFSET` with `ORDER BY is_pinned DESC, created_at DESC` | < 50ms per page |
+| History FTS5 search | Same as clipboard FTS5 | < 100ms for 1K entries |
+| Bookmark tree | Single query with self-join for folder hierarchy | < 50ms |
+
+## 17.4 Resource Cleanup
+
+| Resource | Cleanup Trigger | Mechanism |
+|---|---|---|
+| Browser tab renderers | Tab close, workspace switch | `QWebEnginePage.deleteLater()` |
+| SQLite connections | Thread exit, workspace switch, shutdown | `conn.close()` in thread-local finalizer |
+| QTimer instances | Scope exit, undo expiration | Python GC + Qt parent hierarchy |
+| Temporary files | Atomic write completion | `os.replace()` removes old tmp file; orphaned `.tmp` files cleaned on startup |
+
+---
+
+# 18. Testing Architecture
+
+## 18.1 Testability by Design
+
+| Design Decision | Testability Benefit |
+|---|---|
+| **Protocol-based interfaces** | Modules can be tested with mock implementations |
+| **Constructor injection** | No global state; dependencies explicitly provided |
+| **Signal-based communication** | Signals can be intercepted with `pytest-qt`'s `qtbot.waitSignal()` |
+| **Separated business logic from UI** | ClipboardManager tested without ClipboardWidget |
+| **Platform layer abstraction** | `InputSimulator` mocked to avoid actual `SendInput` calls in tests |
+| **Pydantic models** | Models self-validate; test data construction is explicit |
+
+## 18.2 Mocking Strategy
+
+| External Dependency | Mock Approach | Library |
+|---|---|---|
+| Windows `SendInput` API | `InputSimulatorProtocol` mock | `unittest.mock.MagicMock` |
+| Windows `RegisterHotKey` API | `HotkeyRegistryProtocol` mock | `unittest.mock.MagicMock` |
+| Qt WebEngine | Not mocked; integration tests use `QWebEngineView` | Real Qt (pytest-qt) |
+| SQLite | In-memory database (`:memory:`) for unit tests | Real SQLite |
+| File system | `tmp_path` fixture (pytest built-in) | pytest |
+| Network (update check) | `unittest.mock.patch` on `urllib.request.urlopen` | `unittest.mock` |
+
+## 18.3 Test Organization
+
+```
+tests/
+├── conftest.py                     # Shared fixtures: app_context, tmp_data_dir, db_factory
+├── unit/
+│   ├── test_clipboard_manager.py   # ClipboardManager with mocked store
+│   ├── test_clipboard_store.py     # ClipboardStore with in-memory SQLite
+│   ├── test_typing_engine.py       # TypingEngine with mocked InputSimulator
+│   ├── test_speed_controller.py    # Speed calibration, jitter distribution
+│   ├── test_typing_queue.py        # Queue operations
+│   ├── test_workspace_manager.py   # Workspace CRUD with tmp filesystem
+│   ├── test_config_manager.py      # Config load/save/validate/migrate
+│   ├── test_session_manager.py     # Session save/load/crash detection
+│   ├── test_hotkey_manager.py      # Hotkey registration with mocked registry
+│   ├── test_search_engine.py       # Cross-source search
+│   ├── test_navigation_manager.py  # Navigation state tracking
+│   ├── test_models.py              # Pydantic model validation edge cases
+│   ├── test_json_store.py          # Atomic write, corruption handling
+│   ├── test_database.py            # Connection management, WAL, migrations
+│   └── test_validators.py          # Input validation helpers
+├── integration/
+│   ├── test_clipboard_typing_flow.py   # Copy → Queue → Type pipeline
+│   ├── test_workspace_lifecycle.py     # Create → Use → Switch → Delete
+│   ├── test_session_recovery.py        # Save → Crash → Recover
+│   ├── test_settings_propagation.py    # Change setting → Verify effect
+│   └── test_browser_clipboard.py       # Browser → Clipboard integration
+├── ui/
+│   ├── test_main_window.py         # Window creation, panel switching
+│   ├── test_clipboard_widget.py    # Entry display, search, pin/unpin
+│   ├── test_typing_widget.py       # Controls state, progress display
+│   ├── test_settings_panel.py      # Settings rendering, persistence
+│   └── test_theme_switching.py     # Dark/light theme application
+├── performance/
+│   ├── test_startup_time.py        # Boot-to-interactive benchmark
+│   ├── test_clipboard_search.py    # FTS5 query benchmark at scale
+│   ├── test_memory_usage.py        # RSS measurement under various loads
+│   └── test_typing_throughput.py   # Characters per second at each speed
+└── fixtures/
+    ├── sample_entries.json         # 100 sample clipboard entries
+    ├── large_entries.json          # 10,000 entries for perf tests
+    └── sample_workspace.bmw        # Sample workspace archive for import tests
+```
+
+## 18.4 CI Pipeline Tests
+
+```
+ruff check src/ tests/        # Lint + format
+mypy src/                     # Type check
+pytest tests/unit/ -v         # Unit tests
+pytest tests/integration/ -v  # Integration tests
+pytest tests/performance/ -v  # Performance benchmarks (assert budgets)
+coverage report --fail-under=80
+```
+
+---
+
+# 19. Dependency Graph
+
+## 19.1 Allowed Import Rules
+
+```
+src/main.py          → src/app
+src/app              → src/core/*, src/ui/main_window, src/ui/splash_screen
+src/core/*           → src/models/*, src/storage/*, src/platform/*
+src/browser/*        → src/models/*, src/storage/*, src/platform/*, src/core/events
+src/clipboard/*      → src/models/*, src/storage/*, src/core/events
+src/typing/*         → src/models/*, src/platform/*, src/core/events
+src/ui/*             → src/models/*, src/core/* (read-only), src/browser/*, src/clipboard/*, src/typing/*
+src/models/*         → pydantic, stdlib ONLY
+src/storage/*        → sqlite3, src/models/*, src/platform/file_utils
+src/platform/*       → ctypes, pywin32, stdlib, PySide6 (Qt types only)
+```
+
+## 19.2 Forbidden Imports
+
+| Module | Cannot Import | Reason |
+|---|---|---|
+| `src/models/*` | Anything in `src/` except stdlib and pydantic | Models are passive; they must not pull in business logic or UI |
+| `src/storage/*` | `src/core/*`, `src/browser/*`, `src/clipboard/*`, `src/typing/*`, `src/ui/*` | Data layer must not know about higher layers |
+| `src/platform/*` | `src/core/*`, `src/browser/*`, `src/clipboard/*`, `src/typing/*`, `src/ui/*`, `src/storage/*` | Platform wrappers are leaf dependencies |
+| `src/core/*` | `src/ui/*` | Core must not know about UI (communicate via signals only) |
+| `src/browser/*` | `src/clipboard/*`, `src/typing/*` | Domain modules are independent; communicate via `core/events` signals |
+| `src/clipboard/*` | `src/browser/*`, `src/typing/*` | Same as above |
+| `src/typing/*` | `src/browser/*`, `src/clipboard/*` | Same as above |
+
+## 19.3 Enforcement
+
+Use `ruff` with `I001` (import sorting) and a custom rule or `import-linter` to enforce these boundaries in CI:
+
+```toml
+# pyproject.toml
+[tool.importlinter]
+root_package = "src"
+
+[[tool.importlinter.contracts]]
+name = "Layered architecture"
+type = "layers"
+layers = ["ui", "core", "browser|clipboard|typing", "storage", "platform", "models"]
+```
+
+---
+
+# 20. Class Responsibilities
+
+## 20.1 Key Classes (Alphabetical)
+
+### `AccessibilityManager`
+- **Purpose:** Coordinate a11y features (screen reader detection, announcements, high contrast)
+- **Public methods:** `is_screen_reader_active()`, `announce(message)`, `set_high_contrast(enabled)`, `is_reduced_motion()`
+- **Lifecycle:** Created during boot; persists for app lifetime
+
+### `AppSettings (Pydantic model)`
+- **Purpose:** Type-safe representation of all application settings
+- **Public methods:** Pydantic-generated (field access, `model_dump()`, `model_validate()`)
+- **Relationships:** Used by ConfigManager; referenced by all modules that read config
+
+### `BrowserProfileManager`
+- **Purpose:** Create, load, and manage `QWebEngineProfile` instances per workspace
+- **Public methods:** `get_profile(workspace_name)`, `create_profile(workspace_name)`, `flush_profile()`, `delete_profile(workspace_name)`
+- **Lifecycle:** Created once; manages profiles lazily
+
+### `BrowserWidget`
+- **Purpose:** Single browser tab content view
+- **Public methods:** `navigate_to(url)`, `selected_text()`, `current_url()`, `zoom_factor()`, `set_zoom_factor(f)`
+- **Lifecycle:** One per tab; destroyed on tab close
+
+### `ClipboardEntry (Pydantic model)`
+- **Purpose:** Data transfer object for a single clipboard entry
+- **Fields:** `id`, `text`, `source_url`, `source_title`, `note`, `categories`, `is_pinned`, `char_count`, `created_at`, `updated_at`
+- **Relationships:** Created by ClipboardManager; consumed by UI and TypingEngine
+
+### `ClipboardManager`
+- **Purpose:** Business logic for clipboard operations
+- **Public methods:** `add_entry()`, `delete_entry()`, `bulk_delete()`, `undo_delete()`, `pin_entry()`, `search()`, `export_entries()`
+- **Lifecycle:** One per workspace; recreated on workspace switch
+
+### `ClipboardStore`
+- **Purpose:** SQLite data access for clipboard entries
+- **Public methods:** `insert(entry)`, `delete(id)`, `update(entry)`, `search(query)`, `get_all(sort, limit, offset)`, `count()`
+- **Lifecycle:** Tied to a database file; closed on workspace switch
+
+### `ConfigManager`
+- **Purpose:** Central settings authority
+- **Public methods:** `get(key_path)`, `set(key_path, value)`, `reset_section()`, `reset_all()`, `settings()`
+- **Lifecycle:** Created once during boot; persists for app lifetime
+
+### `DatabaseManager`
+- **Purpose:** SQLite connection and transaction management
+- **Public methods:** `connect()`, `close()`, `execute()`, `transaction()`
+- **Lifecycle:** One instance per database file; opened/closed per workspace lifecycle
+
+### `HotkeyManager`
+- **Purpose:** Global hotkey registration and dispatch
+- **Public methods:** `register_all()`, `register()`, `unregister()`, `update_binding()`, `set_enabled()`
+- **Lifecycle:** Created once; hotkeys registered after MainWindow is shown
+
+### `InputSimulator`
+- **Purpose:** Thin wrapper for Windows SendInput API
+- **Public methods:** `send_unicode_char(char)`, `send_key(vk_code)`, `send_key_down(vk)`, `send_key_up(vk)`
+- **Lifecycle:** Stateless; created once
+
+### `JsonStore`
+- **Purpose:** Atomic JSON file I/O
+- **Public methods:** `read(path)`, `write(path, data)`, `write_atomic(path, data)`
+- **Lifecycle:** Stateless; shared across modules
+
+### `MainWindow`
+- **Purpose:** Top-level window; layout composition
+- **Public methods:** `switch_panel()`, `set_always_on_top()`, `set_opacity()`, `collapse()`, `expand()`
+- **Lifecycle:** Created last during boot; destroyed first during shutdown
+
+### `MigrationRunner`
+- **Purpose:** Apply database schema migrations
+- **Public methods:** `run_pending()`
+- **Lifecycle:** Runs once per database open
+
+### `NavigationManager`
+- **Purpose:** Browser back/forward/refresh/stop
+- **Public methods:** `go_back()`, `go_forward()`, `refresh()`, `stop()`, `navigate_to(url)`
+- **Lifecycle:** One per workspace activation
+
+### `NotificationManager`
+- **Purpose:** Route notifications to toast/status bar/dialog
+- **Public methods:** `info()`, `warning()`, `error()`, `critical()`, `status()`
+- **Lifecycle:** Created once; persists for app lifetime
+
+### `PerformanceMonitor`
+- **Purpose:** Track runtime metrics
+- **Public methods:** `start()`, `stop()`, `mark_startup_complete()`, `current_metrics()`
+- **Lifecycle:** Created once; started after boot
+
+### `SearchEngine`
+- **Purpose:** Unified search across clipboard, bookmarks, history, tabs, workspaces
+- **Public methods:** `search(query)`, `register_source(source)`, `unregister_source(source_id)`
+- **Lifecycle:** Created once; sources updated on workspace switch
+
+### `SessionManager`
+- **Purpose:** Auto-save, crash detection, session recovery
+- **Public methods:** `start_auto_save()`, `save_now()`, `check_crash()`, `recover_session()`, `acquire_lock()`, `release_lock()`
+- **Lifecycle:** Created during boot; manages lock file
+
+### `SpeedController`
+- **Purpose:** Calculate keystroke delays with jitter
+- **Public methods:** `delay_ms()`, `estimated_time_ms(char_count)`, `set_speed(level)`
+- **Lifecycle:** One per TypingEngine instance
+
+### `TabManager`
+- **Purpose:** Browser tab lifecycle management
+- **Public methods:** `create_tab()`, `close_tab()`, `activate_tab()`, `restore_tabs()`, `all_tabs()`
+- **Lifecycle:** One per workspace activation
+
+### `ThemeManager`
+- **Purpose:** Theme loading and switching
+- **Public methods:** `apply_theme(name)`, `current_theme()`, `set_accent_color()`, `set_font_scale()`
+- **Lifecycle:** Created once; persists for app lifetime
+
+### `TypingEngine`
+- **Purpose:** Character-by-character typing execution
+- **Public methods:** `start(job)`, `pause()`, `resume()`, `cancel()`, `state()`, `is_active()`
+- **Lifecycle:** Created once; worker thread created/destroyed per job
+
+### `TypingJob (Pydantic model)`
+- **Purpose:** Data for a single typing task
+- **Fields:** `id`, `text`, `speed_level`, `pre_delay_seconds`, `source_entry_id`
+- **Relationships:** Created from ClipboardEntry; consumed by TypingEngine
+
+### `TypingQueue`
+- **Purpose:** FIFO queue for pending typing jobs
+- **Public methods:** `enqueue()`, `dequeue()`, `remove()`, `reorder()`, `all_jobs()`
+- **Lifecycle:** One per TypingEngine
+
+### `UpdateManager`
+- **Purpose:** Check GitHub for new versions
+- **Public methods:** `check_for_updates()`
+- **Lifecycle:** Created once; fires once on startup
+
+### `WorkspaceManager`
+- **Purpose:** Workspace CRUD and switching
+- **Public methods:** `create()`, `rename()`, `duplicate()`, `delete()`, `switch()`, `list_all()`, `export_workspace()`, `import_workspace()`
+- **Lifecycle:** Created once; persists for app lifetime
+
+---
+
+# 21. Design Patterns
+
+## 21.1 Patterns in Use
+
+| Pattern | Where | Justification |
+|---|---|---|
+| **Observer (Signal/Slot)** | All inter-module communication | Qt's signal/slot mechanism is a first-class observer pattern. Enables loose coupling, thread-safe cross-thread communication, and testability. The dominant communication pattern in the architecture. |
+| **Dependency Injection** | All module constructors | Modules receive their dependencies via constructor parameters. No global singletons, no service locators. Enables testing with mocks and future swappability. |
+| **Protocol (Structural Typing)** | Module boundaries (`ClipboardStoreProtocol`, `InputSimulatorProtocol`, `HotkeyRegistryProtocol`) | Python Protocols define interfaces without requiring inheritance. Callers depend on the protocol, not the concrete class. Enables mocking without monkey-patching. |
+| **Repository** | `ClipboardStore`, `BookmarkStore`, `HistoryStore` | Separates data access logic from business logic. `ClipboardManager` calls `store.insert()` without knowing it's SQLite. Future: could swap to a cloud store. |
+| **Strategy** | `SpeedController`, `ThemeManager` | SpeedController encapsulates the delay algorithm; swappable for different speed curves. ThemeManager applies different QSS files. |
+| **State Machine** | `TypingEngine` states (IDLE → COUNTDOWN → TYPING → PAUSED → COMPLETED) | The typing engine has well-defined states and transitions. A formal state machine prevents invalid transitions and makes the behavior explicit and testable. |
+| **Command** | `TypingJob`, `UndoToken` | Typing jobs encapsulate "type this text" as a data object that can be queued, serialized, and cancelled. UndoTokens encapsulate "restore these deleted entries." |
+| **Factory** | `DatabaseManager.connect()`, `WorkspaceManager.create()` | Centralized creation logic ensures consistent initialization (WAL mode, foreign keys, migrations). |
+| **Mediator** | `MainWindow` (coordinates panels), `HotkeyManager` (dispatches to correct handler) | MainWindow mediates between sidebar, panels, and status bar. HotkeyManager mediates between OS events and application handlers. |
+| **Singleton (JUSTIFIED)** | `Logger` (Loguru is naturally singleton) | Loguru's module-level `logger` is a singleton by design. This is acceptable because logging is truly global and stateless from the caller's perspective. No other singletons in the architecture. |
+| **Template Method** | `MigrationRunner.run_pending()` | Defines the algorithm (read version → discover scripts → apply → update version). Individual migration scripts implement the `upgrade()` step. |
+| **Composite** | Bookmark folders (tree structure) | `BookmarkFolder` contains child folders and bookmarks. The tree is queried with recursive SQL (CTEs) or in-memory recursion. |
+
+## 21.2 Anti-Patterns Explicitly Avoided
+
+| Anti-Pattern | Avoidance Strategy |
+|---|---|
+| **God Object** | No class has more than ~300 lines. MainWindow delegates to panels; each panel delegates to its manager. |
+| **Global State / Singletons** | All dependencies are constructor-injected. Logger is the sole exception (justified above). |
+| **Service Locator** | No centralized service registry. Each module declares its dependencies explicitly. |
+| **Anemic Domain Model** | Domain objects (ClipboardManager, TypingEngine) contain real business logic, not just getters/setters. |
+| **Circular Dependencies** | Enforced by layered architecture and import-linter. Signals break potential cycles. |
+| **Premature Abstraction** | No interface is created unless it has at least two implementations (real + mock counts). |
+
+---
+
+# 22. Future Extension Points
+
+## 22.1 Plugin System (v1.1)
+
+The architecture prepares for plugins via:
+
+| Preparation | How It Enables Plugins |
+|---|---|
+| Protocol-based interfaces | Plugins implement protocols to integrate with core |
+| Signal-based events | Plugins subscribe to signals without modifying emitters |
+| Constructor injection | Plugin services can be injected into module constructors |
+| Extensible settings model | Settings model supports `extra="allow"` for plugin config |
+| Resource isolation | Plugin directory `plugins/<name>/` contains its own resources |
+
+**Plugin API surface (planned for v1.1):**
+- `on_clipboard_entry_added(entry) → entry` (transform or annotate)
+- `on_typing_job_created(job) → job` (transform)
+- `on_workspace_switched(workspace)` (notification)
+- `register_panel(name, widget_factory)` (add sidebar panel)
+- `register_search_source(source)` (add to global search)
+
+## 22.2 Cloud Sync (v1.1)
+
+- WorkspaceManager's `export_workspace()` and `import_workspace()` are the primitives
+- Cloud sync = automated export to cloud storage + automated import from cloud storage
+- Conflict resolution: last-write-wins for JSON; merge strategy for SQLite (TBD)
+- Sync adapter protocol: `CloudSyncProvider.upload(path)`, `.download(path)`, `.list_remote()`
+
+## 22.3 AI Integration (v2.0)
+
+- No AI is embedded in v1.0 (users access AI via the browser)
+- Future integration point: `ClipboardManager.add_entry()` could trigger an AI summary hook
+- Architecture supports this via the plugin system (plugin subscribes to `entry_added` signal)
+
+## 22.4 Localization (v2.0)
+
+- All user-facing strings are candidates for i18n
+- Qt's `QTranslator` and `.ts`/`.qm` file infrastructure is ready
+- String extraction: `tr()` calls in all UI classes
+- Translation files: `resources/translations/<lang>.qm`
+- ConfigManager already has `general.language` field
+
+## 22.5 Automation APIs (v2.0)
+
+- Expose a local HTTP API or named pipe for external tool integration
+- Operations: trigger typing, add clipboard entry, switch workspace
+- Protected by a local-only binding (localhost) and optional token
+
+---
+
+# 23. Architecture Risks
+
+| ID | Risk | Likelihood | Impact | Mitigation |
+|---|---|---|---|---|
+| AR-01 | Qt WebEngine Chromium version falls behind, breaking websites | Medium | High | Pin PySide6 to latest stable; test target sites monthly; maintain compatibility matrix |
+| AR-02 | PyInstaller produces AV false positives | High | High | Code signing; submit to AV vendors; document in README |
+| AR-03 | Memory grows unboundedly with many tabs | High | Medium | Tab suspension after 30 min idle; configurable cache cap; document recommended tab count |
+| AR-04 | Workspace switch takes > 1s with many clipboard entries | Medium | Medium | Lazy clipboard loading (paginate); async database operations |
+| AR-05 | FTS5 index grows large, slowing search | Low | Medium | Periodic `OPTIMIZE` command; bounded entry count with auto-archival |
+| AR-06 | `SendInput` blocked by UIPI in corporate environments | Medium | Medium | Document limitation; detect failure and suggest clipboard paste fallback |
+| AR-07 | Circular signal chains cause infinite loops | Low | High | Convention: signals carry data, not commands. No signal handler emits the same signal it handles. |
+| AR-08 | Thread contention on typing engine state | Low | Medium | Minimal shared state; `threading.Event` for pause/cancel flags |
+| AR-09 | PySide6 API changes in minor versions | Low | Medium | Pin to specific minor version; test with CI on each upgrade |
+| AR-10 | Platform-specific code limits future cross-platform port | Medium | Low | All Windows-specific code isolated in `src/platform/`; cross-platform requires replacing this one package |
+
+---
+
+# 24. Engineering Decision Log (ADR)
+
+## ADR-01: Python as Primary Language
+
+| Field | Value |
+|---|---|
+| **Decision** | Use Python 3.11+ as the primary development language |
+| **Alternatives** | C#/.NET, C++/Qt, Rust/Tauri, TypeScript/Electron |
+| **Reasoning** | Best balance of development velocity, ecosystem (PySide6, Pydantic, Loguru), and team availability. Performance-critical path (SendInput) is delegated to native API via ctypes. |
+| **Trade-offs** | Larger binary (~200 MB); GIL limits CPU-bound parallelism (mitigated by threading for I/O-bound work). |
+| **Consequences** | All team members need Python proficiency; mypy strict mode is mandatory for type safety. |
+
+## ADR-02: PySide6 over PyQt6
+
+| Field | Value |
+|---|---|
+| **Decision** | Use PySide6 (Qt 6) for GUI framework |
+| **Alternatives** | PyQt6, Tkinter, wxPython |
+| **Reasoning** | LGPL license allows commercial use without license purchase. Same API and features as PyQt6. Qt WebEngine provides integrated Chromium. |
+| **Trade-offs** | Slightly less community content than PyQt6 (most Qt/Python examples use PyQt). |
+| **Consequences** | Must not modify PySide6 source (LGPL requirement); dynamically linked (default). |
+
+## ADR-03: Qt WebEngine over CEF
+
+| Field | Value |
+|---|---|
+| **Decision** | Use Qt WebEngine (integrated with PySide6) for embedded browser |
+| **Alternatives** | CEF (cefpython3), WebView2 |
+| **Reasoning** | Native integration with PySide6 widget tree; maintained by Qt Company; no separate process management needed. CEF's Python binding (cefpython3) is unmaintained for Python 3.11+. |
+| **Trade-offs** | Less control over Chromium internals; DevTools customization is limited. |
+| **Consequences** | Chromium version tied to Qt release cadence; binary size includes Qt WebEngine (~100 MB). |
+
+## ADR-04: Hybrid Storage (SQLite + JSON)
+
+| Field | Value |
+|---|---|
+| **Decision** | Use SQLite for structured/searchable data; JSON for configuration |
+| **Alternatives** | SQLite-only, JSON-only, SQLAlchemy ORM |
+| **Reasoning** | SQLite FTS5 is necessary for sub-200ms clipboard search at 10K entries — impossible with JSON scanning. JSON is superior for small configuration files that benefit from human readability and manual editing. |
+| **Trade-offs** | Two storage technologies to maintain; developers need to understand both. |
+| **Consequences** | Database team needs SQLite proficiency; migration strategy needed for both formats. |
+
+## ADR-05: Signals/Slots over Event Bus
+
+| Field | Value |
+|---|---|
+| **Decision** | Use Qt's built-in Signal/Slot mechanism for all inter-module communication |
+| **Alternatives** | Custom event bus, Python `asyncio`, callback registries |
+| **Reasoning** | Qt signals are thread-safe by design (queued connections across threads), type-checked by Qt, and integrated with the Qt event loop. No external dependency needed. |
+| **Trade-offs** | Modules must be QObject subclasses to emit signals; slightly more boilerplate than a simple callback. |
+| **Consequences** | All manager classes inherit QObject; signal-heavy architecture requires discipline to avoid spaghetti connections. |
+
+## ADR-06: Protocol-Based Interfaces over ABC
+
+| Field | Value |
+|---|---|
+| **Decision** | Use Python `Protocol` classes for module interfaces instead of `ABC` |
+| **Alternatives** | `abc.ABC`, duck typing (no interfaces) |
+| **Reasoning** | Protocols provide structural typing (implementation doesn't need to inherit). This enables mocking without `MagicMock`'s limitations and allows third-party implementations (future plugins) without coupling. |
+| **Trade-offs** | Protocols require runtime_checkable for isinstance checks; mypy support is more nuanced. |
+| **Consequences** | All cross-module interfaces defined as `@runtime_checkable Protocol` classes in `core/protocols.py`. |
+
+## ADR-07: Pydantic over Dataclasses
+
+| Field | Value |
+|---|---|
+| **Decision** | Use Pydantic v2 for all data models |
+| **Alternatives** | `dataclasses`, `attrs`, raw dicts |
+| **Reasoning** | Pydantic provides validation, serialization to/from JSON, immutability (`frozen=True`), and comprehensive error messages — all critical for settings validation and data integrity. |
+| **Trade-offs** | Pydantic models are ~3x slower to construct than dataclasses (irrelevant for our use case). |
+| **Consequences** | Pydantic is a runtime dependency; all models are validated on construction. |
+
+## ADR-08: Loguru over stdlib logging
+
+| Field | Value |
+|---|---|
+| **Decision** | Use Loguru for structured logging |
+| **Alternatives** | `logging` (stdlib), `structlog` |
+| **Reasoning** | Loguru offers zero-config rotation, compression, structured context, and a much simpler API than stdlib's `logging` module. |
+| **Trade-offs** | External dependency; Loguru's module-level singleton is non-injectable (acceptable for logging). |
+| **Consequences** | Single import (`from loguru import logger`) everywhere; custom privacy filter applied globally. |
+
+## ADR-09: ctypes over pywin32 for SendInput
+
+| Field | Value |
+|---|---|
+| **Decision** | Primary implementation uses `ctypes` for Windows API calls; `pywin32` as fallback for complex operations |
+| **Alternatives** | `pywin32` exclusively, `pynput`, `keyboard` library |
+| **Reasoning** | `ctypes` is stdlib — no extra dependency for the critical path. `SendInput` via ctypes is well-documented and reliable. `pywin32` is added for higher-level operations (e.g., `GetForegroundWindow` conveniently) if ctypes becomes unwieldy. |
+| **Trade-offs** | ctypes code is more verbose than pywin32 equivalents. |
+| **Consequences** | `platform/input_simulator.py` uses ctypes structs for `INPUT`, `KEYBDINPUT`; tested thoroughly. |
+
+## ADR-10: Layered Architecture over Clean Architecture
+
+| Field | Value |
+|---|---|
+| **Decision** | Use a 5-layer architecture (Presentation → Application → Domain → Data Access → Platform) |
+| **Alternatives** | Clean Architecture (Entities → Use Cases → Interface Adapters → Frameworks), hexagonal |
+| **Reasoning** | Clean Architecture adds ceremony (use case classes, port/adapter interfaces) that is disproportionate for a desktop application with well-defined modules. The 5-layer model is simpler, provides sufficient isolation, and maps naturally to the folder structure. |
+| **Trade-offs** | Less formal than Clean Architecture; domain layer has direct (not inverted) dependencies on data access. |
+| **Consequences** | Domain modules import from `storage/`; this is acceptable because the data access layer is stable and unlikely to be swapped. |
+
+## ADR-11: No ORM
+
+| Field | Value |
+|---|---|
+| **Decision** | Use raw SQL with `sqlite3` stdlib module; no ORM |
+| **Alternatives** | SQLAlchemy, Peewee, tortoise-orm |
+| **Reasoning** | The database schema is simple (6 tables across 3 databases). An ORM adds dependency weight, connection complexity, and an abstraction that obscures FTS5 features. Raw SQL with parameterized queries is sufficient, explicit, and performant. |
+| **Trade-offs** | No automatic query building; migrations are manual scripts. |
+| **Consequences** | Developers write SQL directly; migration scripts are Python functions with raw SQL. |
+
+## ADR-12: No Auto-Update
+
+| Field | Value |
+|---|---|
+| **Decision** | Application checks for updates but does not auto-download or auto-install |
+| **Alternatives** | In-app auto-update (download + replace), Squirrel (update framework) |
+| **Reasoning** | Auto-update mechanisms are complex, introduce security risk (code execution from remote), and conflict with the portable deployment model (user may have the app on a USB stick with no write access to the source). |
+| **Trade-offs** | Users must manually download and extract updates. |
+| **Consequences** | Simple update flow: HTTPS GET → version compare → notification → user downloads from browser. |
+
+## ADR-13: Workspace-Isolated Browser Profiles
+
+| Field | Value |
+|---|---|
+| **Decision** | Each workspace gets its own Chromium profile (cookies, cache, storage) |
+| **Alternatives** | Shared profile across workspaces |
+| **Reasoning** | Isolation prevents cookie leakage between contexts (e.g., a teacher's personal Google account shouldn't appear in the classroom workspace). |
+| **Trade-offs** | Higher disk usage (~25 MB per workspace minimum); user must re-login in each workspace. |
+| **Consequences** | BrowserProfileManager creates separate `QWebEngineProfile` instances per workspace. Shared profile option deferred to v1.1. |
+
+## ADR-14: QThread over threading.Thread
+
+| Field | Value |
+|---|---|
+| **Decision** | Use `QThread` for the typing engine worker instead of `threading.Thread` |
+| **Alternatives** | `threading.Thread`, `concurrent.futures.ThreadPoolExecutor` |
+| **Reasoning** | `QThread` integrates with Qt's event loop and signal system. Cross-thread signals from a `QThread` are automatically queued, ensuring thread-safe UI updates without manual marshaling. |
+| **Trade-offs** | Typing engine becomes Qt-dependent; cannot be used outside a Qt application (acceptable). |
+| **Consequences** | Worker inherits from `QThread`; communicates exclusively via signals. |
+
+## ADR-15: No Click-Through Window
+
+| Field | Value |
+|---|---|
+| **Decision** | The overlay window does NOT support click-through at any opacity level |
+| **Alternatives** | Click-through at low opacity (< 30%), always click-through |
+| **Reasoning** | Click-through windows are associated with stealth overlays used for cheating. batmanoverlay's transparency principle requires the window to always be interactive and visible. Clicking on it means you interact with it. |
+| **Trade-offs** | Users cannot interact with underlying windows through the overlay. |
+| **Consequences** | No `WS_EX_TRANSPARENT` window style; opacity minimum is 10%. |
+
+---
+
+# 25. Development Readiness Checklist
+
+| # | Item | Status | Notes |
+|---|---|---|---|
+| 1 | PRD is locked and approved | ✅ | v1.0.0 |
+| 2 | Technology stack is finalized | ✅ | Python 3.11+, PySide6, SQLite, Pydantic, Loguru |
+| 3 | Architecture layers are defined | ✅ | 5-layer: Presentation → Application → Domain → Data Access → Platform |
+| 4 | Folder structure is documented | ✅ | §3 |
+| 5 | All modules have defined interfaces | ✅ | §4 (Protocol-based) |
+| 6 | Dependency graph is documented | ✅ | §19 (with forbidden imports) |
+| 7 | Threading model is specified | ✅ | §7 (main + typing worker + thread pool) |
+| 8 | State management is defined | ✅ | §6 (3-tier: app/workspace/transient) |
+| 9 | Storage schema is finalized | ✅ | §8 (SQLite + JSON hybrid) |
+| 10 | Migration strategy is defined | ✅ | §8.4 (versioned Python scripts) |
+| 11 | Error handling strategy is documented | ✅ | §15 (classification, retry, fallback) |
+| 12 | Security constraints are explicit | ✅ | §16 (exclusion list confirmed) |
+| 13 | Performance budgets are set | ✅ | §17 (startup < 5s, RAM < 200MB, search < 200ms) |
+| 14 | Testing strategy is defined | ✅ | §18 (pyramid, mocking, CI pipeline) |
+| 15 | Design patterns are justified | ✅ | §21 (11 patterns, anti-patterns avoided) |
+| 16 | Init and shutdown order documented | ✅ | §5.3, §5.4 |
+| 17 | Key ADRs recorded | ✅ | §24 (15 decisions) |
+| 18 | Future extension points identified | ✅ | §22 (plugins, cloud, AI, i18n) |
+| 19 | Architecture risks identified | ✅ | §23 (10 risks with mitigations) |
+| 20 | All PRD modules are mapped to architecture modules | ✅ | Cross-reference below |
+
+### PRD → Architecture Module Mapping
+
+| PRD Module | Architecture Module(s) |
+|---|---|
+| M1: Application Core | `main.py`, `app.py`, `core/logger`, `core/performance_monitor` |
+| M2: Embedded Browser | `browser/*` |
+| M3: Workspace Management | `core/workspace_manager`, `browser/browser_profile` |
+| M4: Smart Clipboard | `clipboard/*` |
+| M5: Character Typing | `typing/*`, `platform/input_simulator` |
+| M6: Global Hotkeys | `core/hotkey_manager`, `platform/hotkey_registry` |
+| M7: Floating Window | `ui/main_window`, `ui/title_bar` |
+| M8: Settings | `core/config_manager`, `ui/settings_panel`, `models/settings` |
+| M9: Global Search | `core/search_engine`, `ui/search_dialog` |
+| M10: Session Management | `core/session_manager` |
+| M11: Logging | `core/logger` |
+| M12: Accessibility | `core/accessibility_manager` |
+| M13: Performance | `core/performance_monitor` |
+| M14: Error Handling | `core/exceptions`, error handling in every module |
+| M15: Testing | `tests/*` |
+
+---
+
+> [!IMPORTANT]
+> **This document is the definitive engineering blueprint for batmanoverlay.** All implementation must conform to the architecture, interfaces, and constraints defined here. Deviations require an ADR entry with justification and architectural review.
+
+---
+
+*End of Software Architecture Document*
+
+**Document Status:** Draft — Pending Engineering Review
+**Next Action:** Engineering team review → Architecture approval → Begin implementation sprint planning

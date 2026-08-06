@@ -1,0 +1,166 @@
+/* Dark Theme Stylesheet for batmanoverlay */
+
+QMainWindow {
+    background-color: #1E1E2E;
+    color: #CDD6F4;
+    font-family: "Inter", "Segoe UI", sans-serif;
+    font-size: 13px;
+}
+
+QWidget {
+    color: #CDD6F4;
+    font-family: "Inter", "Segoe UI", sans-serif;
+}
+
+/* Custom TitleBar */
+#TitleBar {
+    background-color: #181825;
+    border-bottom: 1px solid #313244;
+}
+
+#TitleBar QLabel {
+    color: #CDD6F4;
+    font-weight: bold;
+    font-size: 13px;
+}
+
+#TitleBar QToolButton {
+    background-color: transparent;
+    border: none;
+    border-radius: 4px;
+    padding: 4px;
+}
+
+#TitleBar QToolButton:hover {
+    background-color: #313244;
+}
+
+#TitleBar QToolButton:pressed {
+    background-color: #45475A;
+}
+
+#CloseButton:hover {
+    background-color: #F38BA8;
+}
+
+/* Sidebar */
+#Sidebar {
+    background-color: #181825;
+    border-right: 1px solid #313244;
+}
+
+#SidebarButton {
+    background-color: transparent;
+    border: none;
+    border-radius: 6px;
+    color: #A6ADC8;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 8px;
+    text-align: left;
+}
+
+#SidebarButton:hover {
+    background-color: #313244;
+    color: #CDD6F4;
+}
+
+#SidebarButton[active="true"] {
+    background-color: #5B8DEF;
+    color: #FFFFFF;
+    font-weight: bold;
+}
+
+/* StatusBar */
+#StatusBar {
+    background-color: #181825;
+    border-top: 1px solid #313244;
+    color: #A6ADC8;
+    font-size: 11px;
+}
+
+/* Controls & Forms */
+QLineEdit, QSpinBox, QComboBox {
+    background-color: #313244;
+    border: 1px solid #45475A;
+    border-radius: 6px;
+    color: #CDD6F4;
+    padding: 6px 10px;
+    selection-background-color: #5B8DEF;
+}
+
+QLineEdit:focus, QSpinBox:focus, QComboBox:focus {
+    border: 1px solid #5B8DEF;
+}
+
+QPushButton {
+    background-color: #5B8DEF;
+    border: none;
+    border-radius: 6px;
+    color: #FFFFFF;
+    font-weight: bold;
+    padding: 8px 16px;
+}
+
+QPushButton:hover {
+    background-color: #74A2F8;
+}
+
+QPushButton:pressed {
+    background-color: #4376DC;
+}
+
+QPushButton:disabled {
+    background-color: #45475A;
+    color: #6C7086;
+}
+
+QCheckBox {
+    spacing: 8px;
+}
+
+QCheckBox::indicator {
+    width: 18px;
+    height: 18px;
+    border-radius: 4px;
+    border: 1px solid #45475A;
+    background-color: #313244;
+}
+
+QCheckBox::indicator:checked {
+    background-color: #5B8DEF;
+    border-color: #5B8DEF;
+}
+
+QGroupBox {
+    border: 1px solid #313244;
+    border-radius: 8px;
+    margin-top: 12px;
+    padding-top: 16px;
+    font-weight: bold;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    padding: 0 8px;
+    color: #5B8DEF;
+}
+
+QSlider::groove:horizontal {
+    height: 6px;
+    background: #313244;
+    border-radius: 3px;
+}
+
+QSlider::handle:horizontal {
+    background: #5B8DEF;
+    width: 16px;
+    height: 16px;
+    margin: -5px 0;
+    border-radius: 8px;
+}
+
+QSlider::handle:horizontal:hover {
+    background: #74A2F8;
+}
