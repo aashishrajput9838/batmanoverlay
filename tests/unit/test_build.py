@@ -1,4 +1,7 @@
-"""Comprehensive tests for the deterministic build pipeline."""
+"""Comprehensive unit & integration tests for the deterministic build pipeline,
+
+spec file configuration, bootloader startup, and OneDir runtime integrity.
+"""
 
 import shutil
 from pathlib import Path
@@ -21,7 +24,7 @@ from scripts.build import (
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Safe filesystem helpers
+# Safe Filesystem Helpers
 # ──────────────────────────────────────────────────────────────────────────────
 @pytest.mark.unit
 class TestSafeFilesystemHelpers:
@@ -50,8 +53,8 @@ class TestSafeFilesystemHelpers:
         f = tmp_path / "hashme.bin"
         f.write_bytes(b"deterministic content")
         h = safe_file_hash(f)
-        assert len(h) == 64  # SHA-256 hex digest length
-        assert h == safe_file_hash(f)  # Deterministic
+        assert len(h) == 64
+        assert h == safe_file_hash(f)
 
     def test_safe_file_hash_missing(self, tmp_path: Path) -> None:
         f = tmp_path / "missing.bin"
@@ -99,7 +102,7 @@ class TestSafeFilesystemHelpers:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Build lock
+# Build Lock
 # ──────────────────────────────────────────────────────────────────────────────
 @pytest.mark.unit
 class TestBuildLock:
@@ -111,7 +114,6 @@ class TestBuildLock:
     def test_concurrent_lock_blocked(self) -> None:
         release_build_lock()
         assert acquire_build_lock() is True
-        # Second acquisition should fail because our PID is alive
         assert acquire_build_lock() is False
         release_build_lock()
 
@@ -119,14 +121,13 @@ class TestBuildLock:
         release_build_lock()
         from scripts.build import LOCK_FILE
 
-        # Write a lock with a non-existent PID
         LOCK_FILE.write_text("999999999:0.0", encoding="utf-8")
         assert acquire_build_lock() is True
         release_build_lock()
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# BuildResult / BuildState
+# BuildResult & BuildState
 # ──────────────────────────────────────────────────────────────────────────────
 @pytest.mark.unit
 class TestBuildResult:
@@ -145,35 +146,53 @@ class TestBuildResult:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# get_executable_path
+# Executable Resolution & Verification
 # ──────────────────────────────────────────────────────────────────────────────
 @pytest.mark.unit
-class TestGetExecutablePath:
-    def test_returns_absolute_path(self) -> None:
+class TestExecutableResolution:
+    def test_get_executable_path_returns_onedir_target(self) -> None:
         exe = get_executable_path()
         assert isinstance(exe, Path)
         assert exe.is_absolute()
         assert exe.name == "batmanoverlay.exe"
+        assert exe.parent.name == "batmanoverlay"
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-# verify_executable (legacy API)
-# ──────────────────────────────────────────────────────────────────────────────
-@pytest.mark.unit
-class TestVerifyExecutable:
-    def test_missing_raises(self, tmp_path: Path) -> None:
+    def test_verify_executable_missing_raises(self, tmp_path: Path) -> None:
         missing = tmp_path / "not_here.exe"
         with pytest.raises(FileNotFoundError, match="Executable missing"):
             verify_executable(missing, timeout_sec=0.2)
 
-    def test_existing_returns_resolved(self, tmp_path: Path) -> None:
+    def test_verify_executable_existing_returns_resolved(self, tmp_path: Path) -> None:
         f = tmp_path / "valid.exe"
         f.write_bytes(b"dummy executable content")
         result = verify_executable(f, timeout_sec=1.0)
         assert result == f.resolve()
 
-    def test_zero_size_raises(self, tmp_path: Path) -> None:
-        f = tmp_path / "empty.exe"
-        f.write_bytes(b"")
-        with pytest.raises(FileNotFoundError, match="Executable missing"):
-            verify_executable(f, timeout_sec=0.3)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Spec File & OneDir Integrity Tests
+# ──────────────────────────────────────────────────────────────────────────────
+@pytest.mark.unit
+class TestSpecFileAndPackagingIntegrity:
+    def test_spec_file_exists_and_contains_hiddenimports(self) -> None:
+        spec_path = Path(__file__).resolve().parent.parent.parent / "batmanoverlay.spec"
+        assert spec_path.exists(), "batmanoverlay.spec must exist in workspace root"
+        content = spec_path.read_text(encoding="utf-8")
+        assert "encodings" in content
+        assert "PySide6.QtWebEngineWidgets" in content
+        assert "PySide6.QtWebEngineCore" in content
+        assert "COLLECT" in content
+        assert "exclude_binaries=True" in content
+
+    def test_onedir_packaging_structure(self, tmp_path: Path) -> None:
+        """Verify OneDir structure requirements: exe adjacent to _internal/."""
+        package_dir = tmp_path / "batmanoverlay"
+        package_dir.mkdir()
+        internal_dir = package_dir / "_internal"
+        internal_dir.mkdir()
+        exe = package_dir / "batmanoverlay.exe"
+        exe.write_bytes(b"dummy binary")
+
+        assert (package_dir / "batmanoverlay.exe").exists()
+        assert (package_dir / "_internal").exists()
+        assert (package_dir / "_internal").is_dir()

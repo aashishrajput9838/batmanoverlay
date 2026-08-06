@@ -28,7 +28,6 @@ MANIFEST
 
 # PyInstaller
 *.manifest
-*.spec
 release/
 .build.lock
 
