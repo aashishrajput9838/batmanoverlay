@@ -42,6 +42,7 @@ def run_pyinstaller() -> None:
         f"--distpath={DIST_DIR}",
         f"--workpath={BUILD_DIR}",
         f"--add-data={RESOURCES_DIR};resources",
+        f"--add-data={SRC_DIR / 'storage' / 'migrations'};src/storage/migrations",
         "--paths=src",
         str(SRC_DIR / "main.py"),
     ]

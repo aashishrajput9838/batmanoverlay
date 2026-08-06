@@ -1,6 +1,7 @@
 """UI unit tests for ClipboardPanel, ClipboardItemCard, and ClipboardDialogs."""
 
 from pathlib import Path
+
 import pytest
 
 from src.clipboard.service import ClipboardService

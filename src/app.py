@@ -69,8 +69,8 @@ class BatmanOverlayApp(QApplication):
             tb_details = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
 
             logger.critical(
-                f"Unhandled Exception [{error_code}]: {exc_type.__name__}: {error_msg}",
-                exc_info=(exc_type, exc_value, exc_tb),
+                f"Unhandled Exception [{error_code}]: {exc_type.__name__}: {error_msg}\n"
+                f"{tb_details}"
             )
 
             if self.main_window and self.main_window.isVisible():
