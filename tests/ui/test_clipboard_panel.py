@@ -33,7 +33,7 @@ def test_clipboard_panel_initialization_and_refresh(
     panel.show()
 
     # Empty state initial check
-    assert panel.empty_label.isVisible()
+    assert panel.empty_state.isVisible()
     assert panel.count_badge.text() == "0 items"
 
     # Add item to service
@@ -42,7 +42,7 @@ def test_clipboard_panel_initialization_and_refresh(
 
     assert panel.list_widget.count() == 1
     assert panel.count_badge.text() == "1 items"
-    assert not panel.empty_label.isVisible()
+    assert not panel.empty_state.isVisible()
 
 
 @pytest.mark.ui

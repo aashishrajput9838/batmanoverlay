@@ -164,3 +164,33 @@ QSlider::handle:horizontal {
 QSlider::handle:horizontal:hover {
     background: #74A2F8;
 }
+
+/* QListWidget & Item Cards */
+QListWidget {
+    background-color: transparent;
+    border: none;
+    outline: none;
+}
+
+QListWidget::item {
+    background-color: #181825;
+    border: 1px solid #313244;
+    border-radius: 8px;
+    margin-bottom: 4px;
+    padding: 0px;
+}
+
+QListWidget::item:hover {
+    background-color: #313244;
+    border: 1px solid #5B8DEF;
+}
+
+QListWidget::item:selected {
+    background-color: #313244;
+    border: 2px solid #5B8DEF;
+}
+
+/* Focus Indicators for Accessibility */
+*:focus {
+    outline: 2px solid #5B8DEF;
+}

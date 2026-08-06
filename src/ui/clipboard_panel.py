@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import (
     QApplication,
@@ -23,6 +23,7 @@ from src.clipboard.protocols import IClipboardService
 from src.core.events import AppSignals
 from src.models.clipboard import ClipboardItem
 from src.ui.clipboard_card import ClipboardItemCard
+from src.ui.components.empty_state import EmptyStateWidget
 from src.ui.dialogs import ClipboardClearConfirmDialog, ClipboardPreviewDialog
 from src.ui.icons import IconManager
 
@@ -44,6 +45,7 @@ class ClipboardPanel(QWidget):
         self._search_query = ""
 
         self._setup_ui()
+        self._setup_timer()
         self._connect_signals()
         self.refresh_items()
 
@@ -57,23 +59,32 @@ class ClipboardPanel(QWidget):
         header_layout.setSpacing(10)
 
         title_label = QLabel("<b>Clipboard History</b>", self)
+        title_label.setStyleSheet("color: #CDD6F4; font-size: 15px;")
         header_layout.addWidget(title_label)
 
         self.count_badge = QLabel("0 items", self)
-        self.count_badge.setStyleSheet("color: #A6ADC8; font-size: 11px;")
+        self.count_badge.setStyleSheet(
+            "color: #A6ADC8; font-size: 11px; background-color: #313244; "
+            "padding: 2px 8px; border-radius: 10px;"
+        )
         header_layout.addWidget(self.count_badge)
 
         header_layout.addStretch()
 
+        # Action Toolbars
         self.btn_export = QToolButton(self)
         self.btn_export.setIcon(IconManager.get_icon("settings"))
         self.btn_export.setToolTip("Export History (JSON / CSV / TXT)")
+        self.btn_export.setAccessibleName("Export History")
+        self.btn_export.setMinimumSize(32, 32)
         self.btn_export.clicked.connect(self._on_export_clicked)
         header_layout.addWidget(self.btn_export)
 
         self.btn_clear = QToolButton(self)
         self.btn_clear.setIcon(IconManager.get_icon("delete"))
         self.btn_clear.setToolTip("Clear Clipboard History")
+        self.btn_clear.setAccessibleName("Clear Clipboard History")
+        self.btn_clear.setMinimumSize(32, 32)
         self.btn_clear.clicked.connect(self._on_clear_clicked)
         header_layout.addWidget(self.btn_clear)
 
@@ -84,8 +95,9 @@ class ClipboardPanel(QWidget):
         filter_row.setSpacing(8)
 
         self.search_input = QLineEdit(self)
-        self.search_input.setPlaceholderText("Search clipboard (Ctrl+F)...")
+        self.search_input.setPlaceholderText("Search clipboard history (Ctrl+F)...")
         self.search_input.setClearButtonEnabled(True)
+        self.search_input.setAccessibleName("Search clipboard history")
         self.search_input.textChanged.connect(self._on_search_changed)
         filter_row.addWidget(self.search_input, stretch=1)
 
@@ -93,16 +105,19 @@ class ClipboardPanel(QWidget):
         self.btn_filter_all = QPushButton("All", self)
         self.btn_filter_all.setCheckable(True)
         self.btn_filter_all.setChecked(True)
+        self.btn_filter_all.setToolTip("Show all history entries")
         self.btn_filter_all.clicked.connect(lambda: self._set_filter("all"))
         filter_row.addWidget(self.btn_filter_all)
 
         self.btn_filter_pinned = QPushButton("Pinned", self)
         self.btn_filter_pinned.setCheckable(True)
+        self.btn_filter_pinned.setToolTip("Show pinned items only")
         self.btn_filter_pinned.clicked.connect(lambda: self._set_filter("pinned"))
         filter_row.addWidget(self.btn_filter_pinned)
 
         self.btn_filter_fav = QPushButton("Favorites", self)
         self.btn_filter_fav.setCheckable(True)
+        self.btn_filter_fav.setToolTip("Show favorite items only")
         self.btn_filter_fav.clicked.connect(lambda: self._set_filter("favorites"))
         filter_row.addWidget(self.btn_filter_fav)
 
@@ -110,15 +125,34 @@ class ClipboardPanel(QWidget):
 
         # Main List Widget
         self.list_widget = QListWidget(self)
-        self.list_widget.setSpacing(4)
+        self.list_widget.setSpacing(6)
+        self.list_widget.setAccessibleName("Clipboard history list")
         self.list_widget.itemDoubleClicked.connect(self._on_item_double_clicked)
         main_layout.addWidget(self.list_widget, stretch=1)
 
-        # Empty State Label
-        self.empty_label = QLabel("No clipboard items captured yet.", self)
-        self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.empty_label.setStyleSheet("color: #6C7086; font-size: 13px;")
-        main_layout.addWidget(self.empty_label)
+        # Centered Empty State Widget (Task 4 & Task 5)
+        self.empty_state = EmptyStateWidget(
+            icon_name="clipboard",
+            title="Clipboard Empty",
+            description="Copy something and it will appear here.",
+            hint="Use Ctrl+C anywhere in Windows",
+            parent=self,
+        )
+        main_layout.addWidget(self.empty_state)
+
+    def _setup_timer(self) -> None:
+        """Setup 10-second timer to dynamically refresh visible relative timestamps."""
+        self._time_timer = QTimer(self)
+        self._time_timer.setInterval(10000)  # 10s
+        self._time_timer.timeout.connect(self._update_card_timestamps)
+        self._time_timer.start()
+
+    def _update_card_timestamps(self) -> None:
+        """Update visible card relative timestamp labels without rebuilding list."""
+        for idx in range(self.list_widget.count()):
+            item_widget = self.list_widget.itemWidget(self.list_widget.item(idx))
+            if isinstance(item_widget, ClipboardItemCard):
+                item_widget.update_relative_time()
 
     def _connect_signals(self) -> None:
         self.signals.clipboard_item_added.connect(lambda _: self.refresh_items())
@@ -155,13 +189,21 @@ class ClipboardPanel(QWidget):
         if not items:
             self.list_widget.hide()
             if self._search_query:
-                self.empty_label.setText(f"No clipboard items match '{self._search_query}'.")
+                self.empty_state.set_content(
+                    title="No Results Found",
+                    description=f"No clipboard entries match '{self._search_query}'.",
+                    hint="Try clearing your search or filtering by All.",
+                )
             else:
-                self.empty_label.setText("No clipboard items captured yet.")
-            self.empty_label.show()
+                self.empty_state.set_content(
+                    title="Clipboard Empty",
+                    description="Copy something and it will appear here.",
+                    hint="Use Ctrl+C anywhere in Windows",
+                )
+            self.empty_state.show()
             return
 
-        self.empty_label.hide()
+        self.empty_state.hide()
         self.list_widget.show()
 
         for item in items:
@@ -240,23 +282,41 @@ class ClipboardPanel(QWidget):
         self.signals.toast_requested.emit("info", f"Exported {len(items)} items to {file_path}.")
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
-        """Handle panel key bindings: Ctrl+F, Delete, Enter, Esc."""
+        """Handle panel key bindings: Ctrl+F, Delete, Enter, Space, Esc."""
+        if self._handle_shortcut_f(event):
+            return
+        if self._handle_shortcut_esc(event):
+            return
+        if self._handle_shortcut_delete(event):
+            return
+        if self._handle_shortcut_enter(event):
+            return
+        if self._handle_shortcut_space(event):
+            return
+
+        super().keyPressEvent(event)
+
+    def _handle_shortcut_f(self, event: QKeyEvent) -> bool:
         if event.key() == Qt.Key.Key_F and (
             event.modifiers() & Qt.KeyboardModifier.ControlModifier
         ):
             self.search_input.setFocus()
             self.search_input.selectAll()
             event.accept()
-            return
+            return True
+        return False
 
+    def _handle_shortcut_esc(self, event: QKeyEvent) -> bool:
         if event.key() == Qt.Key.Key_Escape and (
             self.search_input.hasFocus() or self._search_query
         ):
             self.search_input.clear()
             self.list_widget.setFocus()
             event.accept()
-            return
+            return True
+        return False
 
+    def _handle_shortcut_delete(self, event: QKeyEvent) -> bool:
         if event.key() == Qt.Key.Key_Delete:
             curr_item = self.list_widget.currentItem()
             if curr_item:
@@ -265,8 +325,10 @@ class ClipboardPanel(QWidget):
                     self.service.delete_item(widget.item.id)
                     self.refresh_items()
                     event.accept()
-                    return
+                    return True
+        return False
 
+    def _handle_shortcut_enter(self, event: QKeyEvent) -> bool:
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             curr_item = self.list_widget.currentItem()
             if curr_item:
@@ -275,6 +337,16 @@ class ClipboardPanel(QWidget):
                     QApplication.clipboard().setText(widget.item.content)
                     self.signals.toast_requested.emit("info", "Copied to clipboard!")
                     event.accept()
-                    return
+                    return True
+        return False
 
-        super().keyPressEvent(event)
+    def _handle_shortcut_space(self, event: QKeyEvent) -> bool:
+        if event.key() == Qt.Key.Key_Space:
+            curr_item = self.list_widget.currentItem()
+            if curr_item:
+                widget = self.list_widget.itemWidget(curr_item)
+                if isinstance(widget, ClipboardItemCard):
+                    self._open_preview(widget.item)
+                    event.accept()
+                    return True
+        return False

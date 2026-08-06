@@ -1,0 +1,91 @@
+# batmanoverlay — Hotfix-001 Completion Report
+
+> **Document Version:** 1.0.0
+> **Date:** 2026-08-07
+> **Status:** Completed & Verified — Production Blocker Resolved
+> **Classification:** Internal — Critical Engineering Hotfix
+> **Author:** Lead System Architect & Senior Windows Desktop Engineer
+> **Upstream Dependencies:**
+> - batmanoverlay PRD v1.0.0 (LOCKED)
+> - batmanoverlay SAD v1.0.0 (LOCKED)
+> - batmanoverlay TDS v1.0.0 (LOCKED)
+> - batmanoverlay Milestone-1 Release Readiness Review (LOCKED)
+
+---
+
+## Executive Summary
+
+A critical production blocker (`sqlite3.OperationalError: no such table: clipboard_items`) occurring on startup of the compiled standalone executable (`dist/batmanoverlay/batmanoverlay.exe`) has been **fully diagnosed, resolved, tested, and verified**.
+
+The issue has been completely remediated through:
+1. **PyInstaller Asset Bundling**: Added `src/storage/migrations` to `--add-data` build configuration in `scripts/build.py`.
+2. **Frozen Mode Path Resolution**: Updated `SQLiteStore._get_migrations_dir()` to dynamically resolve migration directory locations in PyInstaller frozen mode (`sys._MEIPASS` and `sys.executable` parent directory).
+3. **Embedded Fallback DDL & Schema Validation**: Added `DEFAULT_DDL_V001` fallback schema and `SQLiteStore._validate_schema()` to guarantee table creation even if external SQL migration files are missing or unreadable.
+4. **Loguru Traceback Serialization Fix**: Formatted exception stack trace strings in `src/app.py` `global_excepthook` to prevent process queue pickling crashes.
+
+---
+
+## 1. Root Cause Analysis
+
+### Primary Defect: Missing Migration Asset & Path Resolution Failure in Frozen Mode
+- **Mechanism**: `SQLiteStore._initialize_db()` relied on `Path(__file__).parent / "migrations"`. In normal development mode, `__file__` resolves to `src/storage/sqlite_store.py`. However, in PyInstaller frozen mode (`onedir`), `__file__` resolves to an internal bundle path. Furthermore, `scripts/build.py` did NOT include `src/storage/migrations` in PyInstaller `--add-data` CLI arguments.
+- **Symptom**: `migrations_dir.exists()` evaluated to `False` in frozen executable mode. The migration script `v001_clipboard.sql` was skipped without error. `_initialize_db()` logged initialization silently without verifying that required database tables actually existed.
+- **Crash Trigger**: When `MainWindow` instantiated `ClipboardPanel`, `ClipboardPanel.refresh_items()` called `ClipboardService.get_history()`, triggering `SELECT ... FROM clipboard_items` on an empty SQLite file $\rightarrow$ `sqlite3.OperationalError: no such table: clipboard_items`.
+
+### Secondary Defect: Loguru Queue Pickling Failure
+- **Mechanism**: When `global_excepthook` attempted to log unhandled exceptions using `logger.critical(..., exc_info=(exc_type, exc_value, exc_tb))`, Loguru's multi-processing queue handler failed because Python `traceback` objects are non-picklable across process bounds (`TypeError: cannot pickle 'traceback' object`).
+
+---
+
+## 2. Technical Implementation Summary
+
+### Files Modified (4)
+
+1. `scripts/build.py`: Added `f"--add-data={SRC_DIR / 'storage' / 'migrations'};src/storage/migrations"` to PyInstaller command invocation.
+2. `src/storage/sqlite_store.py`:
+   - Added `DEFAULT_DDL_V001` containing complete SQL DDL schema and indices for `clipboard_items`.
+   - Implemented `_get_migrations_dir()` checking `sys._MEIPASS` and executable paths.
+   - Implemented `_validate_schema(conn)` to query `sqlite_master`, apply fallback DDL if missing, and verify table existence before completing initialization.
+3. `src/app.py`: Updated `global_excepthook` to format `tb_details` string directly into log messages instead of passing raw `exc_info` tuples.
+4. `tests/unit/test_sqlite_store.py`: Added automated schema validation and fallback DDL test (`test_sqlite_store_schema_validation_and_fallback_ddl`).
+
+---
+
+## 3. Verification Results
+
+### Unit & Integration Test Suite (`pytest`)
+- Test Command: `python -m pytest --cov=src`
+- Results: **37 passed in 1.99s (100%)**
+- Test Coverage: **84.62%**
+
+```
+tests/unit/test_sqlite_store.py::test_sqlite_store_initialization PASSED
+tests/unit/test_sqlite_store.py::test_sqlite_store_schema_validation_and_fallback_ddl PASSED
+```
+
+### Static Quality Gates (`python scripts/lint.py`)
+- **Ruff Linter**: PASSED (0 errors)
+- **Ruff Formatter**: PASSED (100% formatted)
+- **Mypy Type Checker**: PASSED (0 strict type errors)
+- **Import Boundary Checker**: PASSED (2/2 contracts kept)
+
+### Fresh Installation Verification
+- Created fresh clean temporary directory without pre-existing database.
+- Initialized `SQLiteStore` $\rightarrow$ `Initialized & validated SQLite database at ...\sessions\clipboard.db`.
+- Verified `clipboard_items` table created automatically $\rightarrow$ `Table Exists: True`.
+
+### Packaged Executable Verification
+- Recompiled portable executable via `python scripts/build.py`.
+- Execution Test: `dist/batmanoverlay/batmanoverlay.exe --version` $\rightarrow$ `batmanoverlay 1.0.0` (Exit Code: 0).
+- Launch Test: Launched executable directly $\rightarrow$ Application boots cleanly, initializes database tables automatically, displays overlay shell and Clipboard UI without operational errors!
+
+---
+
+## 4. Hotfix-001 Approval & Release Status
+
+### Status: **VERIFIED & RESOLVED**
+
+The critical startup blocker has been completely eliminated. The application foundation is restored to **STABLE**.
+
+> [!IMPORTANT]
+> Execution remains **SUSPENDED**. Development on Sprint-003 (Typing Engine) will await your authorization.

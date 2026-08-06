@@ -12,6 +12,8 @@ class ClipboardItemType(StrEnum):
     """Enumeration of supported clipboard content types."""
 
     TEXT = "text"
+    CODE = "code"
+    URL = "url"
     HTML = "html"
     IMAGE = "image"
     FILE = "file"

@@ -2,6 +2,7 @@
 
 from src.ui.clipboard_card import ClipboardItemCard
 from src.ui.clipboard_panel import ClipboardPanel
+from src.ui.components.empty_state import EmptyStateWidget
 from src.ui.dialogs import ConfirmDialog, ErrorDialog, RecoveryDialog
 from src.ui.icons import IconManager
 from src.ui.main_window import MainWindow
@@ -16,6 +17,7 @@ __all__ = [
     "ClipboardItemCard",
     "ClipboardPanel",
     "ConfirmDialog",
+    "EmptyStateWidget",
     "ErrorDialog",
     "IconManager",
     "MainWindow",

@@ -31,7 +31,8 @@ def main() -> None:
             [
                 sys.executable,
                 "-c",
-                "from importlinter.cli import lint_imports_command; import sys; sys.exit(lint_imports_command())",
+                "from importlinter.cli import lint_imports_command; "
+                "import sys; sys.exit(lint_imports_command())",
             ],
         ),
     ]

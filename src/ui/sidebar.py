@@ -17,7 +17,9 @@ class SidebarButton(QToolButton):
         self.setIcon(IconManager.get_icon(icon_name))
         self.setIconSize(QSize(20, 20))
         self.setText(label)
-        self.setToolTip(label)
+        self.setToolTip(f"{label} Panel")
+        self.setAccessibleName(f"Navigate to {label}")
+        self.setMinimumSize(40, 40)
         self.setCheckable(True)
 
 
