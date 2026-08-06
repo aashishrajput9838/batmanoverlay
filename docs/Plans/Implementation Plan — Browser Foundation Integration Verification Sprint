@@ -1,0 +1,49 @@
+# Implementation Plan — Browser Foundation Integration Verification Sprint
+
+Perform an intensive, zero-trust **Integration & Stress Verification** on the newly implemented **Browser Foundation Engine** (`src/browser/`) across 10 specific objectives.
+
+## User Review Required
+
+> [!IMPORTANT]
+> No production UI widgets (`BrowserPanel`, `AddressBar`, `QWebEngineView`, `Tabs`, etc.) will be created. All verification will be driven programmatically via developer test harnesses (`scratch/audit_browser_foundation.py` and `tests/integration/test_browser_foundation.py`).
+
+> [!NOTE]
+> All existing 45 automated tests will continue passing. Additional integration and stress tests will be added.
+
+---
+
+## Proposed Changes
+
+### Developer Stress & Integration Verification Harness (`scratch/audit_browser_foundation.py`)
+
+#### [NEW] [scratch/audit_browser_foundation.py](file:///c:/github/batmanoverlay.com/scratch/audit_browser_foundation.py)
+- Programmatic audit script testing all 10 objectives:
+  1. `BrowserService` lifecycle (boot, tab creation, tab closing, navigation state updates).
+  2. URL Normalization & Search Query Detection (1,000+ edge-case raw inputs: domains, ports, IPs, subdomains, queries, unicode, malformed inputs).
+  3. Workspace Profile Isolation (verifying 5 concurrent profiles with isolated cookies, cache, downloads, and history directories).
+  4. Session Persistence (saving 100 tabs per workspace session and restoring state).
+  5. Cache Management (writing dummy cache payloads and verifying atomic purging).
+  6. Cookie Management (writing cookie files and verifying isolated profile clearing).
+  7. Profile Cleanup (purging workspace profile folders and verifying clean deletion).
+  8. Crash Recovery (simulating corrupted `session.json` payload and verifying automatic fallback recovery without crashing).
+  9. Dependency Injection Container Integration (verifying instantiation in `src/app.py`).
+  10. Stress & Performance Benchmarks (ingesting 1,000 tab operations, measuring memory RSS and execution latency).
+
+---
+
+### Automated Integration Test Suite (`tests/integration/test_browser_foundation.py`)
+
+#### [NEW] [tests/integration/test_browser_foundation.py](file:///c:/github/batmanoverlay.com/tests/integration/test_browser_foundation.py)
+- Integration test suite for `BrowserService`, `BrowserProfileManager`, `BrowserSessionManager`, and crash recovery scenarios.
+
+---
+
+## Verification Plan
+
+### Automated Tests & Quality Gates
+- `python scratch/audit_browser_foundation.py` (Execute benchmark audit harness).
+- `python -m pytest --cov=src` (Verify 100% pass rate & >= 80.0% coverage).
+- `python scripts/lint.py` (Verify 0 ruff errors, 0 mypy strict errors, 2/2 import boundary contracts kept).
+
+### Artifacts to Generate
+- `batmanoverlay_browser_foundation_integration_report.md` (Integration Verification Report, Performance Metrics, Readiness Assessment, and Official Go / No-Go Recommendation).

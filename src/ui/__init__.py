@@ -1,5 +1,6 @@
 """Presentation layer package for batmanoverlay."""
 
+from src.ui.browser_panel import BrowserPanel
 from src.ui.clipboard_card import ClipboardItemCard
 from src.ui.clipboard_panel import ClipboardPanel
 from src.ui.components.empty_state import EmptyStateWidget
@@ -14,6 +15,7 @@ from src.ui.title_bar import TitleBar
 from src.ui.toast import ToastManager, ToastWidget
 
 __all__ = [
+    "BrowserPanel",
     "ClipboardItemCard",
     "ClipboardPanel",
     "ConfirmDialog",

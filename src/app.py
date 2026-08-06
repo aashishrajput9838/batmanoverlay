@@ -139,6 +139,7 @@ class BatmanOverlayApp(QApplication):
             self.signals,
             self.data_dir,
             clipboard_service=self.clipboard_service,
+            browser_service=self.browser_service,
         )
 
         # 8. Schedule Splash Transition

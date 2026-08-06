@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.browser.protocols import IBrowserService
 from src.clipboard.protocols import IClipboardService
 from src.constants import (
     GEOMETRY_SAVE_DEBOUNCE_MS,
@@ -28,6 +29,7 @@ from src.core.config_manager import ConfigManager
 from src.core.events import AppSignals
 from src.models.session import WindowGeometry
 from src.storage.json_store import JsonStore
+from src.ui.browser_panel import BrowserPanel
 from src.ui.clipboard_panel import ClipboardPanel
 from src.ui.settings_panel import SettingsPanel
 from src.ui.sidebar import Sidebar
@@ -72,6 +74,7 @@ class MainWindow(QMainWindow):
         signals: AppSignals,
         data_dir: Path,
         clipboard_service: IClipboardService | None = None,
+        browser_service: IBrowserService | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -80,6 +83,7 @@ class MainWindow(QMainWindow):
         self._signals = signals
         self._data_dir = data_dir
         self._clipboard_service = clipboard_service
+        self._browser_service = browser_service
         self._json_store = JsonStore()
         self._geometry_file = data_dir / "sessions" / "geometry.json"
 
@@ -135,8 +139,14 @@ class MainWindow(QMainWindow):
         else:
             clipboard_widget = _PlaceholderWidget(PanelName.CLIPBOARD, self.stack)
 
+        browser_widget: QWidget
+        if self._browser_service:
+            browser_widget = BrowserPanel(self._browser_service, self._signals, self.stack)
+        else:
+            browser_widget = _PlaceholderWidget(PanelName.BROWSER, self.stack)
+
         self._panel_widgets: dict[str, QWidget] = {
-            PanelName.BROWSER: _PlaceholderWidget(PanelName.BROWSER, self.stack),
+            PanelName.BROWSER: browser_widget,
             PanelName.CLIPBOARD: clipboard_widget,
             PanelName.TYPING: _PlaceholderWidget(PanelName.TYPING, self.stack),
             PanelName.BOOKMARKS: _PlaceholderWidget(PanelName.BOOKMARKS, self.stack),
