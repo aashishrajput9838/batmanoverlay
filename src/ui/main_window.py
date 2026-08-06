@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.clipboard.protocols import IClipboardService
 from src.constants import (
     GEOMETRY_SAVE_DEBOUNCE_MS,
     MIN_WINDOW_HEIGHT,
@@ -27,6 +28,7 @@ from src.core.config_manager import ConfigManager
 from src.core.events import AppSignals
 from src.models.session import WindowGeometry
 from src.storage.json_store import JsonStore
+from src.ui.clipboard_panel import ClipboardPanel
 from src.ui.settings_panel import SettingsPanel
 from src.ui.sidebar import Sidebar
 from src.ui.status_bar import StatusBar
@@ -69,6 +71,7 @@ class MainWindow(QMainWindow):
         config_manager: ConfigManager,
         signals: AppSignals,
         data_dir: Path,
+        clipboard_service: IClipboardService | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -76,6 +79,7 @@ class MainWindow(QMainWindow):
         self._config_manager = config_manager
         self._signals = signals
         self._data_dir = data_dir
+        self._clipboard_service = clipboard_service
         self._json_store = JsonStore()
         self._geometry_file = data_dir / "sessions" / "geometry.json"
 
@@ -125,9 +129,15 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget(self._content_widget)
 
         # Instantiate Panels
+        clipboard_widget: QWidget
+        if self._clipboard_service:
+            clipboard_widget = ClipboardPanel(self._clipboard_service, self._signals, self.stack)
+        else:
+            clipboard_widget = _PlaceholderWidget(PanelName.CLIPBOARD, self.stack)
+
         self._panel_widgets: dict[str, QWidget] = {
             PanelName.BROWSER: _PlaceholderWidget(PanelName.BROWSER, self.stack),
-            PanelName.CLIPBOARD: _PlaceholderWidget(PanelName.CLIPBOARD, self.stack),
+            PanelName.CLIPBOARD: clipboard_widget,
             PanelName.TYPING: _PlaceholderWidget(PanelName.TYPING, self.stack),
             PanelName.BOOKMARKS: _PlaceholderWidget(PanelName.BOOKMARKS, self.stack),
             PanelName.SETTINGS: SettingsPanel(self._config_manager, self.stack),

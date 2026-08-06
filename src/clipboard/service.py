@@ -100,6 +100,14 @@ class ClipboardService(QObject):
             logger.info(f"Deleted clipboard item {item_id}")
         return success
 
+    def delete_item(self, item_id: str) -> bool:
+        """Alias for remove_item."""
+        return self.remove_item(item_id)
+
+    def search_history(self, query_str: str, limit: int = 50) -> list[ClipboardItem]:
+        """Alias for search."""
+        return self.search(query_str, limit=limit)
+
     def clear_all(self, keep_pinned: bool = True) -> int:
         """Clear history entries."""
         count = self._repository.clear_history(keep_pinned=keep_pinned)

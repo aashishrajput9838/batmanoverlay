@@ -122,7 +122,12 @@ class BatmanOverlayApp(QApplication):
         self.processEvents()
 
         # 7. Main Window Construction
-        self.main_window = MainWindow(self.config_manager, self.signals, self.data_dir)
+        self.main_window = MainWindow(
+            self.config_manager,
+            self.signals,
+            self.data_dir,
+            clipboard_service=self.clipboard_service,
+        )
 
         # 8. Schedule Splash Transition
         QTimer.singleShot(600, self._finish_boot)
