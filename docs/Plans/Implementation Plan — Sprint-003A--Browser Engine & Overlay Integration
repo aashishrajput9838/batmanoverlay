@@ -1,0 +1,53 @@
+# Implementation Plan — Sprint-003A: Browser Engine & Overlay Integration
+
+> **Sprint Goal**: Implement the **Browser Foundation Engine** and **Browser Panel UI** (`src/browser/`), integrating a high-performance web view into the `batmanoverlay` frameless window stack with custom navigation controls, security sandboxing, and overlay integration.
+
+---
+
+## User Review Required
+
+> [!IMPORTANT]
+> PySide6 `QWebEngineView` (Chromium engine) will be encapsulated behind clean interface protocols (`IBrowserService`) in `src/browser/protocols.py`, adhering to SAD §4 Layered Architecture contracts (`ui` $\rightarrow$ `browser` $\rightarrow$ `core`).
+
+> [!NOTE]
+> `QWebEngineView` will be configured with privacy and security defaults (sandboxed profile, persistent cookie/cache path in `data/sessions/browser`, disabled camera/microphone permissions by default).
+
+---
+
+## Proposed Changes
+
+### Browser Architecture (`src/browser/`)
+
+#### [NEW] [src/browser/protocols.py](file:///c:/github/batmanoverlay.com/src/browser/protocols.py)
+- Protocol interfaces: `IBrowserService`, `IBrowserTab`, `IBrowserHistoryRepository`.
+
+#### [NEW] [src/browser/models.py](file:///c:/github/batmanoverlay.com/src/browser/models.py)
+- Domain data models: `BrowserTabModel`, `NavigationState`, `SecurityLevel`.
+
+#### [NEW] [src/browser/service.py](file:///c:/github/batmanoverlay.com/src/browser/service.py)
+- Implementation of `BrowserService` managing web engine profiles, URL normalization (`http://` / `https://` prefixing, search engine fallback), navigation history, and security policies.
+
+---
+
+### Presentation Layer (`src/ui/browser_panel.py`)
+
+#### [NEW] [src/ui/browser_panel.py](file:///c:/github/batmanoverlay.com/src/ui/browser_panel.py)
+- `BrowserPanel`: Main browser layout featuring:
+  - Navigation Toolbar: Back button, Forward button, Reload/Stop button, SSL Security indicator badge, URL input address bar (`QLineEdit`), and Quick Action menu.
+  - `QWebEngineView` Container: Integrated Chromium web view rendering full web pages directly within the overlay window.
+  - Loading Progress Bar: Subtle progress bar tied to `loadProgress` signals.
+
+#### [MODIFY] [src/ui/main_window.py](file:///c:/github/batmanoverlay.com/src/ui/main_window.py) & [src/app.py](file:///c:/github/batmanoverlay.com/src/app.py)
+- Wire `BrowserPanel` into `MainWindow` panel stack (`PanelName.BROWSER`).
+
+---
+
+## Verification Plan
+
+### Automated Tests
+- Unit tests for `BrowserService`, URL normalization, search query resolution, and security profile setup in `tests/unit/test_browser_service.py`.
+- UI integration tests for `BrowserPanel` navigation bar and web view signals in `tests/ui/test_browser_panel.py`.
+- Quality gates: `pytest`, `mypy --strict`, `ruff check`, `import-linter` (keeping 2/2 contracts).
+
+### Manual Verification
+- Launch compiled executable and verify web browsing, URL navigation, Back/Forward controls, SSL indicator badge, and frameless window responsiveness.

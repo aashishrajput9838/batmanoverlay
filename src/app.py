@@ -116,6 +116,18 @@ class BatmanOverlayApp(QApplication):
             parent=self,
         )
 
+        # 5.5 Browser Engine Container
+        from src.browser.profile_manager import BrowserProfileManager
+        from src.browser.service import BrowserService
+        from src.browser.session_manager import BrowserSessionManager
+
+        self.browser_profile_manager = BrowserProfileManager(self.data_dir)
+        self.browser_session_manager = BrowserSessionManager(self.browser_profile_manager)
+        self.browser_service = BrowserService(
+            profile_manager=self.browser_profile_manager,
+            session_manager=self.browser_session_manager,
+        )
+
         # 6. Splash Screen
         self.splash_screen = SplashScreen()
         self.splash_screen.show()
