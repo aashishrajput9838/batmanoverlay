@@ -53,6 +53,63 @@ def test_browser_panel_instantiation_and_navigation(
 
 
 @pytest.mark.ui
+def test_browser_panel_toolbar_icon_rendering(
+    qtbot: pytest.PyTest, browser_service: BrowserService
+) -> None:
+    """Hotfix-003 Verification: Ensure every browser toolbar button has non-null QIcon,
+
+    proper accessibility attributes, minimum sizes, and dynamic reload/stop icon switching.
+    """
+    signals = AppSignals()
+    panel = BrowserPanel(browser_service, signals)
+    qtbot.addWidget(panel)
+    panel.show()
+
+    # 1. Back button
+    assert panel.btn_back.icon().isNull() is False
+    assert panel.btn_back.accessibleName() == "Navigate Back"
+    assert "Back" in panel.btn_back.toolTip()
+    assert panel.btn_back.minimumWidth() >= 32
+    assert panel.btn_back.minimumHeight() >= 32
+
+    # 2. Forward button
+    assert panel.btn_forward.icon().isNull() is False
+    assert panel.btn_forward.accessibleName() == "Navigate Forward"
+    assert "Forward" in panel.btn_forward.toolTip()
+    assert panel.btn_forward.minimumWidth() >= 32
+    assert panel.btn_forward.minimumHeight() >= 32
+
+    # 3. Reload button
+    assert panel.btn_reload.icon().isNull() is False
+    assert panel.btn_reload.accessibleName() == "Reload Page"
+    assert "Reload" in panel.btn_reload.toolTip()
+    assert panel.btn_reload.minimumWidth() >= 32
+    assert panel.btn_reload.minimumHeight() >= 32
+
+    # 4. Home button
+    assert panel.btn_home.icon().isNull() is False
+    assert panel.btn_home.accessibleName() == "Navigate Home"
+    assert "Home" in panel.btn_home.toolTip()
+
+    # 5. Security Indicator
+    assert panel.lbl_security.pixmap() is not None
+    assert panel.lbl_security.pixmap().isNull() is False
+    assert panel.lbl_security.accessibleName() == "Security Status Indicator"
+
+    # Test load state transition: reload -> stop
+    panel._on_load_started()
+    assert panel.btn_reload.icon().isNull() is False
+    assert panel.btn_reload.accessibleName() == "Stop Loading"
+    assert "Stop" in panel.btn_reload.toolTip()
+
+    # Test load finished transition: stop -> reload
+    panel._on_load_finished(True)
+    assert panel.btn_reload.icon().isNull() is False
+    assert panel.btn_reload.accessibleName() == "Reload Page"
+    assert "Reload" in panel.btn_reload.toolTip()
+
+
+@pytest.mark.ui
 def test_browser_panel_keyboard_shortcuts(
     qtbot: pytest.PyTest, browser_service: BrowserService
 ) -> None:

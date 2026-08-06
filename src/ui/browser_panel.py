@@ -75,21 +75,30 @@ class BrowserPanel(QWidget):
 
         # 3. Reload / Stop Button
         self.btn_reload = QToolButton(self)
-        self.btn_reload.setIcon(IconManager.get_icon("settings"))
+        self.btn_reload.setIcon(IconManager.get_icon("reload"))
         self.btn_reload.setToolTip("Reload (F5)")
         self.btn_reload.setAccessibleName("Reload Page")
         self.btn_reload.setMinimumSize(32, 32)
         self.btn_reload.clicked.connect(self._on_reload_clicked)
         toolbar_layout.addWidget(self.btn_reload)
 
-        # 4. Security Indicator Badge
+        # 4. Home Button
+        self.btn_home = QToolButton(self)
+        self.btn_home.setIcon(IconManager.get_icon("home"))
+        self.btn_home.setToolTip("Home")
+        self.btn_home.setAccessibleName("Navigate Home")
+        self.btn_home.setMinimumSize(32, 32)
+        self.btn_home.clicked.connect(self._on_home_clicked)
+        toolbar_layout.addWidget(self.btn_home)
+
+        # 5. Security Indicator Badge
         self.lbl_security = QLabel(self)
         self.lbl_security.setPixmap(IconManager.get_icon("shield").pixmap(16, 16))
         self.lbl_security.setToolTip("Security Status: Safe Connection")
         self.lbl_security.setAccessibleName("Security Status Indicator")
         toolbar_layout.addWidget(self.lbl_security)
 
-        # 5. Address Bar (QLineEdit)
+        # 6. Address Bar (QLineEdit)
         self.url_input = QLineEdit(self)
         self.url_input.setPlaceholderText("Search or enter web address (Ctrl+L)...")
         self.url_input.setClearButtonEnabled(True)
@@ -154,6 +163,9 @@ class BrowserPanel(QWidget):
         else:
             self.web_view.reload()
 
+    def _on_home_clicked(self) -> None:
+        self.navigate("about:blank")
+
     def _on_url_changed(self, url: QUrl) -> None:
         url_str = url.toString()
         display_url = clean_display_url(url_str)
@@ -166,10 +178,10 @@ class BrowserPanel(QWidget):
 
         # Update Security Indicator Badge
         if display_url.startswith("https://"):
-            self.lbl_security.setPixmap(IconManager.get_icon("shield").pixmap(16, 16))
+            self.lbl_security.setPixmap(IconManager.get_icon("shield", "#A6E3A1").pixmap(16, 16))
             self.lbl_security.setToolTip("Secure HTTPS Connection")
         else:
-            self.lbl_security.setPixmap(IconManager.get_icon("info").pixmap(16, 16))
+            self.lbl_security.setPixmap(IconManager.get_icon("info", "#F9E2AF").pixmap(16, 16))
             self.lbl_security.setToolTip("Non-HTTPS or Local Address")
 
     def _on_title_changed(self, title: str) -> None:
@@ -180,7 +192,9 @@ class BrowserPanel(QWidget):
         self._is_loading = True
         self.progress_bar.setValue(10)
         self.progress_bar.show()
+        self.btn_reload.setIcon(IconManager.get_icon("stop"))
         self.btn_reload.setToolTip("Stop Loading (Esc)")
+        self.btn_reload.setAccessibleName("Stop Loading")
 
     def _on_load_progress(self, progress: int) -> None:
         self.progress_bar.setValue(progress)
@@ -188,7 +202,9 @@ class BrowserPanel(QWidget):
     def _on_load_finished(self, success: bool) -> None:
         self._is_loading = False
         self.progress_bar.hide()
+        self.btn_reload.setIcon(IconManager.get_icon("reload"))
         self.btn_reload.setToolTip("Reload (F5)")
+        self.btn_reload.setAccessibleName("Reload Page")
         self.btn_back.setEnabled(self.web_view.history().canGoBack())
         self.btn_forward.setEnabled(self.web_view.history().canGoForward())
 

@@ -12,6 +12,25 @@ QWidget {
     font-family: "Inter", "Segoe UI", sans-serif;
 }
 
+QToolButton {
+    background-color: transparent;
+    border: none;
+    border-radius: 6px;
+    padding: 4px;
+}
+
+QToolButton:hover {
+    background-color: #313244;
+}
+
+QToolButton:pressed {
+    background-color: #45475A;
+}
+
+QToolButton:disabled {
+    opacity: 0.35;
+}
+
 /* Custom TitleBar */
 #TitleBar {
     background-color: #181825;
