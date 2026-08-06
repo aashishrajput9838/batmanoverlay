@@ -430,7 +430,7 @@ def phase_promote() -> bool:
     target_dir.mkdir(parents=True, exist_ok=True)
 
     # Sync contents of STAGE_DIR into target_dir
-    print(f"  Promoting {STAGE_DIR} → {target_dir}")
+    print(f"  Promoting {STAGE_DIR} -> {target_dir}")
     for item in STAGE_DIR.glob("*"):
         dest = target_dir / item.name
         try:
