@@ -1,0 +1,44 @@
+# Implementation Plan — Sprint-003B: Browser UI
+
+Implement the **Browser Panel UI** (`src/ui/browser_panel.py`), encapsulating PySide6 `QWebEngineView` within a single-tab browser interface connected to `BrowserService`.
+
+## User Review Required
+
+> [!IMPORTANT]
+> Scope is strictly limited to a single-tab browser view with Address Bar, Back/Forward/Refresh/Stop controls, SSL Security Indicator, Progress Bar, Error Handling, and Keyboard Shortcuts. Advanced features (multi-tab, bookmarks, downloads UI, DevTools) are excluded per sprint requirements.
+
+> [!NOTE]
+> All existing 47 automated tests will continue passing. UI unit tests for `BrowserPanel` will be added.
+
+---
+
+## Proposed Changes
+
+### Presentation Layer (`src/ui/browser_panel.py`)
+
+#### [NEW] [src/ui/browser_panel.py](file:///c:/github/batmanoverlay.com/src/ui/browser_panel.py)
+- `BrowserPanel`: Main browser panel component containing:
+  - **Navigation Bar**: Back button, Forward button, Refresh/Stop button, SSL Lock Security Badge, Address Bar (`QLineEdit`), and Go button.
+  - **Loading Progress Bar**: `QProgressBar` displayed beneath toolbar while `QWebEngineView` is loading content (0-100%).
+  - **Web View Engine**: `QWebEngineView` rendering full web pages.
+  - **Address Bar Integration**: Text editing normalization using `BrowserService.normalize_url()`. Typing a search query or domain triggers URL normalization.
+  - **SSL Security Badge**: Updates icon/color based on HTTPS security (`https://` $\rightarrow$ Green Lock, `http://` $\rightarrow$ Orange Warning).
+  - **Error Page Rendering**: Custom HTML error page displayed when `QWebEngineView.loadFinished(False)` fires, featuring URL details and a "Retry" button.
+  - **Keyboard Shortcuts**: `Ctrl+L` (Focus address bar), `F5` / `Ctrl+R` (Reload), `Alt+Left` (Back), `Alt+Right` (Forward), `Esc` (Stop loading).
+
+#### [MODIFY] [src/ui/main_window.py](file:///c:/github/batmanoverlay.com/src/ui/main_window.py) & [src/app.py](file:///c:/github/batmanoverlay.com/src/app.py)
+- Wire `BrowserPanel` into `MainWindow` panel stack (`PanelName.BROWSER`) passing `browser_service`.
+
+#### [MODIFY] [src/ui/__init__.py](file:///c:/github/batmanoverlay.com/src/ui/__init__.py)
+- Export `BrowserPanel`.
+
+---
+
+## Verification Plan
+
+### Automated Tests
+- `tests/ui/test_browser_panel.py`: Test `BrowserPanel` widget instantiation, address bar text change, back/forward button state, loading progress bar signals.
+- Quality gates: `pytest --cov=src`, `mypy --strict`, `ruff check`, `import-linter` (keeping 2/2 contracts).
+
+### Build Verification
+- Execute `python scripts/build.py` and verify executable creation and execution (`dist/batmanoverlay/batmanoverlay.exe --version`).

@@ -18,6 +18,14 @@ from src.core.events import AppSignals
 from src.ui.icons import IconManager
 
 
+def clean_display_url(url_str: str) -> str:
+    """Sanitize raw URL for user-facing address bar display, hiding internal data/srcdoc URLs."""
+    cleaned = url_str.strip()
+    if not cleaned or cleaned.startswith(("data:", "about:srcdoc", "chrome:", "javascript:")):
+        return "about:blank"
+    return cleaned
+
+
 class BrowserPanel(QWidget):
     """Single-tab web browser panel with navigation toolbar and SSL security status."""
 
@@ -120,7 +128,8 @@ class BrowserPanel(QWidget):
     def navigate(self, raw_url: str) -> None:
         """Normalize URL via BrowserService and navigate QWebEngineView."""
         normalized_url = self.service.normalize_url(raw_url)
-        self.url_input.setText(normalized_url)
+        display_url = clean_display_url(normalized_url)
+        self.url_input.setText(display_url)
         if normalized_url == "about:blank":
             self.web_view.setHtml(self._render_blank_page())
         else:
@@ -147,12 +156,16 @@ class BrowserPanel(QWidget):
 
     def _on_url_changed(self, url: QUrl) -> None:
         url_str = url.toString()
-        self.url_input.setText(url_str)
+        display_url = clean_display_url(url_str)
+
+        if not self.url_input.hasFocus():
+            self.url_input.setText(display_url)
+
         self.btn_back.setEnabled(self.web_view.history().canGoBack())
         self.btn_forward.setEnabled(self.web_view.history().canGoForward())
 
         # Update Security Indicator Badge
-        if url_str.startswith("https://"):
+        if display_url.startswith("https://"):
             self.lbl_security.setPixmap(IconManager.get_icon("shield").pixmap(16, 16))
             self.lbl_security.setToolTip("Secure HTTPS Connection")
         else:
@@ -160,7 +173,8 @@ class BrowserPanel(QWidget):
             self.lbl_security.setToolTip("Non-HTTPS or Local Address")
 
     def _on_title_changed(self, title: str) -> None:
-        self.service.update_navigation_state(self.url_input.text(), title=title)
+        display_url = clean_display_url(self.url_input.text())
+        self.service.update_navigation_state(display_url, title=title)
 
     def _on_load_started(self) -> None:
         self._is_loading = True
@@ -178,8 +192,9 @@ class BrowserPanel(QWidget):
         self.btn_back.setEnabled(self.web_view.history().canGoBack())
         self.btn_forward.setEnabled(self.web_view.history().canGoForward())
 
-        if not success and self.url_input.text() not in ("about:blank", ""):
-            self.web_view.setHtml(self._render_error_page(self.url_input.text()))
+        display_url = clean_display_url(self.url_input.text())
+        if not success and display_url not in ("about:blank", ""):
+            self.web_view.setHtml(self._render_error_page(display_url))
 
     def _render_blank_page(self) -> str:
         return (
@@ -206,7 +221,7 @@ class BrowserPanel(QWidget):
             f"h2 {{ color: #F38BA8; margin-top: 0; }}"
             f"p {{ color: #A6ADC8; font-size: 13px; margin-bottom: 20px; word-break: break-all; }}"
             f"</style></head><body><div class='card'>"
-            f"h2>Unable to Load Web Page</h2>"
+            f"<h2>Unable to Load Web Page</h2>"
             f"<p>Could not connect to <b>{failed_url}</b>. Check network or URL spelling.</p>"
             f"</div></body></html>"
         )
