@@ -1,7 +1,7 @@
 """Deterministic Packaging & Bootloader Pipeline for batmanoverlay.
 
 Architecture:
-    Build Lock → Clean → Spec-Based PyInstaller → Stage Package → Full Boot Verification → Release Promotion
+    Build Lock -> Clean -> Spec-Based PyInstaller -> Stage Package -> Full Boot Verification -> Release Promotion
 
 Root Cause Analysis (Packaging & Bootloader Sprint):
     Root Cause 1 (WinError 32 Directory Lock):
@@ -44,9 +44,9 @@ from pathlib import Path
 
 import psutil
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
 # Constants & Paths
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
 ROOT_DIR = Path(__file__).resolve().parent.parent
 DIST_DIR = ROOT_DIR / "dist"
 BUILD_DIR = ROOT_DIR / "build"
@@ -59,9 +59,9 @@ MAX_RETRY_ATTEMPTS = 6
 BASE_RETRY_MS = 250
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
 # BuildState & BuildResult
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
 class BuildState(enum.Enum):
     """Tracks the single authoritative state of a build run."""
 
@@ -95,9 +95,9 @@ class BuildResult:
         return self.state == BuildState.COMPLETED
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
 # Safe Filesystem Helpers
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
 def safe_file_exists(path: Path, timeout_sec: float = 2.0) -> bool:
     """Check file existence with retry."""
     deadline = time.monotonic() + timeout_sec
@@ -167,9 +167,9 @@ def safe_unlink(path: Path) -> bool:
     return False
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
 # Build Lock & Process Management
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
 def acquire_build_lock() -> bool:
     """Acquire exclusive build lock."""
     if LOCK_FILE.exists():
@@ -219,17 +219,17 @@ def kill_running_processes() -> list[int]:
     return killed
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
 # Canonical Executable Path
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
 def get_executable_path() -> Path:
     """Return absolute path to canonical OneDir executable."""
     return (DIST_DIR / "batmanoverlay" / "batmanoverlay.exe").resolve()
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
 # Build Pipeline Phases
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
 def phase_clean() -> bool:
     """Phase 1: Clean build directories."""
     print("\n" + "=" * 70)
@@ -423,7 +423,7 @@ def phase_verify() -> BuildResult:
 def phase_promote() -> bool:
     """Phase 5: Promote verified staging build to dist/ directory."""
     print("\n" + "=" * 70)
-    print("PHASE 5: PROMOTE (Staging → Release/Dist)")
+    print("PHASE 5: PROMOTE (Staging -> Release/Dist)")
     print("=" * 70)
 
     target_dir = DIST_DIR / "batmanoverlay"
@@ -452,16 +452,16 @@ def phase_promote() -> bool:
     return False
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
 # Main Entry Point
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
 def build() -> BuildResult:
     """Execute full deterministic build pipeline."""
     start_time = time.monotonic()
     result = BuildResult()
 
     print("=" * 70)
-    print("  BATMANOVERLAY — PACKAGING & BOOTLOADER BUILD PIPELINE")
+    print("  BATMANOVERLAY - PACKAGING & BOOTLOADER BUILD PIPELINE")
     print("=" * 70)
 
     if not acquire_build_lock():
