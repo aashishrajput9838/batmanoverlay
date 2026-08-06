@@ -1,0 +1,87 @@
+# Implementation Plan — Sprint-003A: Browser Foundation
+
+Implement the backend/infrastructure **Browser Foundation Engine** (`src/browser/`) to serve as the core service layer for future Browser UI components (Sprint-003B).
+
+## User Review Required
+
+> [!IMPORTANT]
+> According to explicit constraints, **NO UI widgets** (`QWebEngineView`, `BrowserPanel`, Address Bar, Tabs, Toolbar, etc.) will be created in Sprint-003A. All work is strictly backend domain models, protocols, profile manager, session manager, URL normalization, browser service, security policy, and storage infrastructure.
+
+> [!NOTE]
+> All existing 40 unit and UI tests will continue passing. Comprehensive unit tests for browser models, profile manager, session manager, and browser service will be added.
+
+---
+
+## Proposed Changes
+
+### Browser Domain Models (`src/browser/models.py`)
+
+#### [NEW] [src/browser/models.py](file:///c:/github/batmanoverlay.com/src/browser/models.py)
+- Pydantic models (decoupled from Qt Widgets):
+  - `BrowserSecurityLevel`: Enum (`STRICT`, `STANDARD`, `PERMISSIVE`).
+  - `NavigationState`: Data model representing current URL, title, SSL status (`IS_SECURE`, `INSECURE`), loading progress, and back/forward availability.
+  - `BrowserTabModel`: Data model representing a browser tab (ID, URL, title, icon, pin state, security state).
+  - `BrowserProfile`: Data model representing profile metadata (profile_id, name, data_dir, cache_dir, cookies_dir, downloads_dir).
+  - `BrowserSession`: Data model representing a saved session (session_id, workspace_id, open_tabs, active_tab_index, updated_at).
+
+---
+
+### Browser Interface Contracts (`src/browser/protocols.py`)
+
+#### [NEW] [src/browser/protocols.py](file:///c:/github/batmanoverlay.com/src/browser/protocols.py)
+- Protocol interfaces (`@runtime_checkable`):
+  - `IBrowserProfile`
+  - `IBrowserSessionManager`
+  - `IBrowserHistory`
+  - `IBrowserSecurityPolicy`
+  - `IBrowserService`
+
+---
+
+### Profile & Storage Infrastructure (`src/browser/profile_manager.py`)
+
+#### [NEW] [src/browser/profile_manager.py](file:///c:/github/batmanoverlay.com/src/browser/profile_manager.py)
+- `BrowserProfileManager`: Manages workspace-specific browser profile directory trees:
+  - Path structure: `data/browser/profiles/{profile_id}/` (`cache/`, `cookies/`, `history/`, `downloads/`, `sessions/`).
+  - Provides profile resolution, isolation, creation, and path queries using `pathlib.Path`.
+
+---
+
+### Session Lifecycle Management (`src/browser/session_manager.py`)
+
+#### [NEW] [src/browser/session_manager.py](file:///c:/github/batmanoverlay.com/src/browser/session_manager.py)
+- `BrowserSessionManager`: Manages saving, loading, restoring, closing, and workspace switching for browser sessions using `JsonStore`.
+
+---
+
+### Browser Service (`src/browser/service.py`)
+
+#### [NEW] [src/browser/service.py](file:///c:/github/batmanoverlay.com/src/browser/service.py)
+- `BrowserService`: Implementation of `IBrowserService`:
+  - URL Normalization: Converts raw inputs (`google.com`, `localhost:8000`, `192.168.1.1`) into normalized `http://` / `https://` URLs.
+  - Search Query Detection: Identifies queries (e.g. `python pyside6 tutorial`) and constructs search engine URLs (default DuckDuckGo: `https://duckduckgo.com/?q=...`).
+  - Navigation abstraction, session & profile lifecycle coordination, cookie/cache cleanup interfaces.
+
+---
+
+### Documentation & Application Wiring
+
+#### [NEW] [docs/browser_security_policy.md](file:///c:/github/batmanoverlay.com/docs/browser_security_policy.md)
+- Complete security policy documentation (Camera disabled, Microphone disabled, Notifications disabled, Geolocation disabled, Clipboard Read Ask, Clipboard Write Allowed, JavaScript enabled, PDF viewer enabled, Popups blocked).
+
+#### [MODIFY] [src/app.py](file:///c:/github/batmanoverlay.com/src/app.py)
+- Instantiate `BrowserProfileManager`, `BrowserSessionManager`, and `BrowserService` during application boot.
+
+---
+
+## Verification Plan
+
+### Automated Tests
+- `tests/unit/test_browser_models.py`: Verify Pydantic validation for tabs, profiles, sessions.
+- `tests/unit/test_browser_profile_manager.py`: Verify directory creation, profile isolation, and path resolution.
+- `tests/unit/test_browser_session_manager.py`: Verify session save, restore, and workspace separation.
+- `tests/unit/test_browser_service.py`: Verify URL normalization, search query detection, and service lifecycle.
+- Quality gates: `pytest --cov=src`, `mypy --strict`, `ruff check`, `import-linter`.
+
+### Build Verification
+- Execute `python scripts/build.py` and verify executable creation and launch.

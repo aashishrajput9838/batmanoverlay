@@ -1,0 +1,152 @@
+# batmanoverlay — Sprint-003A Completion Report
+
+> **Document Version:** 1.0.0
+> **Date:** 2026-08-07
+> **Status:** Completed & Verified — Quality Gate Approved
+> **Classification:** Internal — Browser Engine Foundation
+> **Author:** Lead System Architect, Browser Systems Engineer & Security Reviewer
+> **Upstream Dependencies:**
+> - batmanoverlay PRD v1.0.0 (LOCKED)
+> - batmanoverlay SAD v1.0.0 (LOCKED)
+> - batmanoverlay TDS v1.0.0 (LOCKED)
+> - batmanoverlay Milestone-1 Release Review (LOCKED)
+> - batmanoverlay Milestone-1.1 UI/UX Polish (LOCKED)
+
+---
+
+## Executive Summary
+
+**Sprint-003A (Browser Foundation)** has been **100% completed, integrated, tested, and verified**.
+
+The backend infrastructure engine for the integrated browser (`src/browser/`) has been implemented to serve as the dependency-injection foundation for future Browser UI components (Sprint-003B).
+
+Strict scope boundaries were enforced: **NO browser UI widgets** (`QWebEngineView`, `BrowserPanel`, address bar, tabs, toolbar, etc.) were created.
+
+---
+
+## 1. Deliverables & Technical Architecture
+
+### 1. Browser Domain Models (`src/browser/models.py`)
+- Pydantic domain data models (strictly decoupled from Qt Widgets):
+  - `BrowserSecurityLevel`: Enum (`STRICT`, `STANDARD`, `PERMISSIVE`).
+  - `NavigationState`: Navigation model (`url`, `title`, `is_loading`, `progress`, `is_secure`, `can_go_back`, `can_go_forward`).
+  - `BrowserTabModel`: Tab representation model (`id`, `url`, `title`, `icon_url`, `is_pinned`, `is_muted`, `security_level`).
+  - `BrowserProfile`: Storage profile model (`profile_id`, `name`, `data_dir`, `cache_dir`, `cookies_dir`, `history_dir`, `downloads_dir`, `sessions_dir`).
+  - `BrowserSession`: Session state model (`session_id`, `workspace_id`, `open_tabs`, `active_tab_index`, `updated_at`).
+
+### 2. Browser Interface Contracts (`src/browser/protocols.py`)
+- `@runtime_checkable` Protocol interfaces:
+  - `IBrowserProfile`
+  - `IBrowserSessionManager`
+  - `IBrowserHistory`
+  - `IBrowserSecurityPolicy`
+  - `IBrowserService`
+
+### 3. Profile & Storage Infrastructure (`src/browser/profile_manager.py`)
+- `BrowserProfileManager`: Workspace-isolated directory structure manager:
+  - Paths: `data/browser/profiles/{profile_id}/` (`cache/`, `cookies/`, `history/`, `downloads/`, `sessions/`).
+  - Strict profile isolation preventing data bleed across workspaces.
+
+### 4. Session Manager (`src/browser/session_manager.py`)
+- `BrowserSessionManager`: Manages saving, loading, restoring, closing, and workspace switching using atomic `JsonStore` persistence with graceful fallback for corrupted session files.
+
+### 5. Browser Service & URL Normalization (`src/browser/service.py`)
+- `BrowserService`: Implementation of `IBrowserService`:
+  - **URL Normalization**: Handles raw inputs (`google.com` $\rightarrow$ `https://google.com`, `localhost:8000` $\rightarrow$ `http://localhost:8000`, `192.168.1.1` $\rightarrow$ `https://192.168.1.1`).
+  - **Search Query Detection**: Automatically detects multi-word queries (e.g. `python pyside6 tutorial`) and constructs DuckDuckGo search URLs (`https://duckduckgo.com/?q=...`).
+  - Tab management, session coordination, cache/cookie cleanup.
+
+### 6. Security Policy Specification (`docs/browser_security_policy.md`)
+- Documented Zero-Trust security rules:
+  - Camera: Disabled
+  - Microphone: Disabled
+  - Notifications: Disabled
+  - Geolocation: Disabled
+  - Clipboard Read: Ask
+  - Clipboard Write: Allowed
+  - JavaScript: Enabled
+  - PDF Viewer: Enabled
+  - Popups: Blocked
+
+---
+
+## 2. Dependency Graph & Storage Architecture
+
+### Dependency Graph
+
+```
+AppShell (src/app.py)
+   │
+   ├──► BrowserProfileManager (src/browser/profile_manager.py)
+   │       └──► Path resolution (data/browser/profiles/{id}/)
+   │
+   ├──► BrowserSessionManager (src/browser/session_manager.py)
+   │       ├──► JsonStore (src/storage/json_store.py)
+   │       └──► BrowserProfileManager
+   │
+   └──► BrowserService (src/browser/service.py)
+           ├──► IBrowserService (src/browser/protocols.py)
+           ├──► BrowserSessionManager
+           └──► BrowserProfileManager
+```
+
+### Storage Directory Structure
+
+```text
+data/
+└── browser/
+    └── profiles/
+        └── default/
+            ├── cache/
+            ├── cookies/
+            ├── history/
+            ├── downloads/
+            └── sessions/
+                └── session.json
+```
+
+---
+
+## 3. Quality Gate Verification
+
+```
+=============================================================================
+QUALITY GATE                            TARGET          RESULT / STATUS
+=============================================================================
+Automated Test Suite (pytest)           100% Pass       45 / 45 PASSED (100%)
+Code Coverage                           >= 80.0%        83.79% Coverage
+Static Type Checking (mypy --strict)    0 Errors        0 Errors (52 files)
+Code Linter & Formatter (ruff)          100% Clean      0 Errors (73 files)
+Import Layer Architecture               2/2 Kept        0 Layer Violations
+Build Verification Pipeline             Deterministic   PASSED (100% Verified)
+Standalone EXE Execution                Code 0          `batmanoverlay 1.0.0`
+=============================================================================
+```
+
+---
+
+## 4. Files Created & Modified
+
+### New Files Created (6)
+1. `src/browser/models.py` — Browser domain models.
+2. `src/browser/protocols.py` — Runtime-checkable protocol interfaces.
+3. `src/browser/profile_manager.py` — Storage profile manager.
+4. `src/browser/session_manager.py` — Session state manager.
+5. `src/browser/service.py` — Core browser backend service & URL normalizer.
+6. `docs/browser_security_policy.md` — Security policy specification.
+7. `tests/unit/test_browser.py` — Unit test suite for browser foundation.
+
+### Existing Files Modified (2)
+1. `src/browser/__init__.py` — Package exports.
+2. `src/app.py` — Injected `BrowserProfileManager`, `BrowserSessionManager`, `BrowserService`.
+
+---
+
+## 5. Milestone & Release Status
+
+### Status: **SPRINT-003A COMPLETE & APPROVED**
+
+The Browser Foundation backend infrastructure is complete, tested, built, and verified.
+
+> [!IMPORTANT]
+> Execution is **STOPPED**. Sprint-003B (Browser UI) will NOT begin until explicit authorization is provided.
