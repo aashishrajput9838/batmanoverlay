@@ -38,13 +38,49 @@ def test_browser_profile_manager(tmp_path: Path) -> None:
 
     assert profile.profile_id == "work_workspace"
     assert profile.cache_dir.exists()
-    assert profile.cookies_dir.exists()
     assert profile.sessions_dir.exists()
+    # Hotfix-005: Verify cookies directory is NOT pre-created as a directory
+    assert not (profile.data_dir / "cookies").is_dir()
+    assert not (profile.data_dir / "Cookies").is_dir()
+
+
+@pytest.mark.unit
+def test_cookies_directory_is_never_created_and_legacy_migrated(tmp_path: Path) -> None:
+    """Hotfix-005 Regression Test: Verify cookies directory is never pre-created
+
+    and any legacy directory named 'cookies' or 'Cookies' is safely removed
+    without affecting History, Local Storage, or Session Storage.
+    """
+    profile_dir = tmp_path / "browser" / "profiles" / "default"
+    profile_dir.mkdir(parents=True, exist_ok=True)
+
+    # Pre-create legacy directory named 'cookies' and dummy user data
+    legacy_cookies_dir = profile_dir / "cookies"
+    legacy_cookies_dir.mkdir()
+    (legacy_cookies_dir / "old_stale_data.txt").write_text("old")
+
+    history_dir = profile_dir / "history"
+    history_dir.mkdir()
+    (history_dir / "history.db").write_text("dummy history")
+
+    profile_mgr = BrowserProfileManager(tmp_path)
+
+    # 1. Verify legacy directory was deleted to prevent collision
+    assert not legacy_cookies_dir.exists()
+
+    # 2. Verify other user data was NOT deleted
+    assert history_dir.exists()
+    assert (history_dir / "history.db").exists()
+
+    # 3. Verify cookies_dir in model points to Cookies file location
+    profile = profile_mgr.get_profile("default")
+    assert profile.cookies_dir == profile_dir / "Cookies"
+    assert not profile.cookies_dir.is_dir()
 
 
 @pytest.mark.unit
 def test_browser_profile_qwebengine_persistence(tmp_path: Path) -> None:
-    """Hotfix-004 Verification: Ensure QWebEngineProfile is persistent,
+    """Hotfix-004/005 Verification: Ensure QWebEngineProfile is persistent,
 
     uses workspace storage/cache paths, enforces ForcePersistentCookies,
     re-uses profile instances, and flushes cookies cleanly.

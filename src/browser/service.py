@@ -128,12 +128,13 @@ class BrowserService:
             return False
 
     def clear_cookies(self) -> bool:
-        """Clear cookies directory for current profile."""
+        """Clear cookies database for current profile."""
         try:
-            cookies_dir = self._profile_mgr.cookies_dir
-            for f in cookies_dir.glob("*"):
-                if f.is_file():
-                    f.unlink()
+            qt_profile = self.get_qt_profile("default")
+            qt_profile.cookieStore().deleteAllCookies()
+            cookies_file = self._profile_mgr.cookies_dir
+            if cookies_file.exists() and cookies_file.is_file():
+                cookies_file.unlink()
             logger.info("Cleared browser profile cookies")
             return True
         except Exception as e:
