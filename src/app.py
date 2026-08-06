@@ -156,6 +156,8 @@ class BatmanOverlayApp(QApplication):
     def shutdown(self) -> None:
         """Perform graceful application shutdown."""
         logger.info("Shutting down batmanoverlay application shell...")
+        if hasattr(self, "browser_service") and self.browser_service:
+            self.browser_service.flush_cookies()
         if self.main_window:
             self.main_window._save_geometry_now()
             self.main_window.hide()

@@ -2,6 +2,7 @@
 
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QKeyEvent
+from PySide6.QtWebEngineCore import QWebEnginePage
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -119,8 +120,11 @@ class BrowserPanel(QWidget):
         self.progress_bar.hide()
         main_layout.addWidget(self.progress_bar)
 
-        # QWebEngineView Web View Container
+        # QWebEngineView Web View Container with Persistent QWebEngineProfile
         self.web_view = QWebEngineView(self)
+        qt_profile = self.service.get_qt_profile("default")
+        self.web_page = QWebEnginePage(qt_profile, self.web_view)
+        self.web_view.setPage(self.web_page)
         self.web_view.setAccessibleName("Web Page Content View")
         main_layout.addWidget(self.web_view, stretch=1)
 

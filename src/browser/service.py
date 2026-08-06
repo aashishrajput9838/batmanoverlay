@@ -4,6 +4,7 @@ import re
 from urllib.parse import quote_plus, urlparse
 
 from loguru import logger
+from PySide6.QtWebEngineCore import QWebEngineProfile
 
 from src.browser.models import (
     BrowserSecurityLevel,
@@ -16,7 +17,7 @@ from src.browser.session_manager import BrowserSessionManager
 
 
 class BrowserService:
-    """Core backend service for URL normalization and session lifecycle."""
+    """Core backend service for URL normalization, profile isolation, and session lifecycle."""
 
     DOMAIN_REGEX = re.compile(
         r"^(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(?::\d+)?(?:/.*)?$|" r"^localhost(?::\d+)?(?:/.*)?$"
@@ -40,6 +41,10 @@ class BrowserService:
     @property
     def current_session(self) -> BrowserSession:
         return self._current_session
+
+    def get_qt_profile(self, profile_id: str = "default") -> QWebEngineProfile:
+        """Get or initialize persistent QWebEngineProfile for a given workspace profile."""
+        return self._profile_mgr.get_or_create_qt_profile(profile_id)
 
     def is_search_query(self, raw_input: str) -> bool:
         """Determine if raw user input is a web search query versus a URL."""
@@ -134,3 +139,7 @@ class BrowserService:
         except Exception as e:
             logger.error(f"Failed to clear cookies: {e}")
             return False
+
+    def flush_cookies(self) -> None:
+        """Flush all browser profile cookie stores on shutdown."""
+        self._profile_mgr.flush_cookies()

@@ -4,6 +4,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+from PySide6.QtWebEngineCore import QWebEngineProfile
+
 from src.browser.models import (
     BrowserProfile,
     BrowserSecurityLevel,
@@ -33,6 +35,10 @@ class IBrowserProfile(Protocol):
     def downloads_dir(self) -> Path: ...
 
     def get_profile(self, profile_id: str) -> BrowserProfile: ...
+
+    def get_or_create_qt_profile(self, profile_id: str = "default") -> QWebEngineProfile: ...
+
+    def flush_cookies(self) -> None: ...
 
 
 @runtime_checkable
@@ -100,6 +106,10 @@ class IBrowserService(Protocol):
 
     def update_navigation_state(self, url: str, title: str = "") -> None: ...
 
+    def get_qt_profile(self, profile_id: str = "default") -> QWebEngineProfile: ...
+
     def clear_cache(self) -> bool: ...
 
     def clear_cookies(self) -> bool: ...
+
+    def flush_cookies(self) -> None: ...

@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+from PySide6.QtWebEngineCore import QWebEngineProfile
 
 from src.browser.models import (
     BrowserSecurityLevel,
@@ -39,6 +40,40 @@ def test_browser_profile_manager(tmp_path: Path) -> None:
     assert profile.cache_dir.exists()
     assert profile.cookies_dir.exists()
     assert profile.sessions_dir.exists()
+
+
+@pytest.mark.unit
+def test_browser_profile_qwebengine_persistence(tmp_path: Path) -> None:
+    """Hotfix-004 Verification: Ensure QWebEngineProfile is persistent,
+
+    uses workspace storage/cache paths, enforces ForcePersistentCookies,
+    re-uses profile instances, and flushes cookies cleanly.
+    """
+    profile_mgr = BrowserProfileManager(tmp_path)
+
+    qt_profile = profile_mgr.get_or_create_qt_profile("default")
+    assert qt_profile.isOffTheRecord() is False
+
+    # 1. Storage Path Verification
+    expected_storage = (tmp_path / "browser" / "profiles" / "default").resolve()
+    assert Path(qt_profile.persistentStoragePath()).resolve() == expected_storage
+
+    # 2. Cache Path Verification
+    expected_cache = (tmp_path / "browser" / "profiles" / "default" / "cache").resolve()
+    assert Path(qt_profile.cachePath()).resolve() == expected_cache
+
+    # 3. Persistent Cookies Policy Verification
+    assert (
+        qt_profile.persistentCookiesPolicy()
+        == QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies
+    )
+
+    # 4. Same Profile Instance Returned (no redundant profiles)
+    again = profile_mgr.get_or_create_qt_profile("default")
+    assert again is qt_profile
+
+    # 5. Cookie Flush Verification
+    profile_mgr.flush_cookies()
 
 
 @pytest.mark.unit
@@ -93,3 +128,8 @@ def test_browser_service_tab_and_clearing(tmp_path: Path) -> None:
     assert service.close_tab(tab.id) is True
     assert service.clear_cache() is True
     assert service.clear_cookies() is True
+
+    # Test service level persistent profile & cookie flush
+    qt_prof = service.get_qt_profile("default")
+    assert qt_prof.isOffTheRecord() is False
+    service.flush_cookies()
