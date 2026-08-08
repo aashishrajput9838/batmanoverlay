@@ -3,10 +3,19 @@ Production Main Window overlay shell for batmanoverlay.
 """
 
 import contextlib
+import ctypes
 from pathlib import Path
+from typing import Any
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QMoveEvent, QResizeEvent
+from PySide6.QtGui import (
+    QCloseEvent,
+    QKeySequence,
+    QMoveEvent,
+    QResizeEvent,
+    QShortcut,
+    QShowEvent,
+)
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -28,9 +37,19 @@ from src.constants import (
 from src.core.config_manager import ConfigManager
 from src.core.events import AppSignals
 from src.models.session import WindowGeometry
+from src.platform.global_hotkey import (
+    HOTKEY_ID_CTRL_ALT_E,
+    MOD_ALT,
+    MOD_CONTROL,
+    MSG,
+    VK_E,
+    WM_HOTKEY,
+    WindowsGlobalHotkeyManager,
+)
 from src.storage.json_store import JsonStore
 from src.ui.browser_panel import BrowserPanel
 from src.ui.clipboard_panel import ClipboardPanel
+from src.ui.overlay_visibility_panel import OverlayVisibilityPanel
 from src.ui.settings_panel import SettingsPanel
 from src.ui.sidebar import Sidebar
 from src.ui.status_bar import StatusBar
@@ -75,6 +94,7 @@ class MainWindow(QMainWindow):
         data_dir: Path,
         clipboard_service: IClipboardService | None = None,
         browser_service: IBrowserService | None = None,
+        typing_engine: Any | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -84,12 +104,15 @@ class MainWindow(QMainWindow):
         self._data_dir = data_dir
         self._clipboard_service = clipboard_service
         self._browser_service = browser_service
+        self._typing_engine = typing_engine
         self._json_store = JsonStore()
         self._geometry_file = data_dir / "sessions" / "geometry.json"
 
         self._is_collapsed = False
         self._is_pinned = True
         self._expanded_height = 768
+        self._hotkey_manager = WindowsGlobalHotkeyManager()
+        self._hotkey_registered = False
 
         # Setup Debounced Geometry Save Timer
         self._geometry_timer = QTimer(self)
@@ -145,10 +168,18 @@ class MainWindow(QMainWindow):
         else:
             browser_widget = _PlaceholderWidget(PanelName.BROWSER, self.stack)
 
+        typing_widget: QWidget
+        if self._typing_engine:
+            from src.ui.typing_panel import TypingPanel
+
+            typing_widget = TypingPanel(self._typing_engine, self._signals, self.stack)
+        else:
+            typing_widget = _PlaceholderWidget(PanelName.TYPING, self.stack)
+
         self._panel_widgets: dict[str, QWidget] = {
             PanelName.BROWSER: browser_widget,
             PanelName.CLIPBOARD: clipboard_widget,
-            PanelName.TYPING: _PlaceholderWidget(PanelName.TYPING, self.stack),
+            PanelName.TYPING: typing_widget,
             PanelName.BOOKMARKS: _PlaceholderWidget(PanelName.BOOKMARKS, self.stack),
             PanelName.SETTINGS: SettingsPanel(self._config_manager, self.stack),
         }
@@ -159,13 +190,17 @@ class MainWindow(QMainWindow):
         content_layout.addWidget(self.stack)
         root_layout.addWidget(self._content_widget, stretch=1)
 
-        # 3. StatusBar
+        # 3. Overlay Visibility Panel
+        self.overlay_visibility_panel = OverlayVisibilityPanel(central)
+        root_layout.addWidget(self.overlay_visibility_panel)
+
+        # 4. StatusBar
         self.status_bar = StatusBar(self._signals, central)
         root_layout.addWidget(self.status_bar)
 
         self.setCentralWidget(central)
 
-        # 4. Toast Manager Overlay
+        # 5. Toast Manager Overlay
         self.toast_manager = ToastManager(self)
 
     def _connect_signals(self) -> None:
@@ -175,12 +210,45 @@ class MainWindow(QMainWindow):
         self.title_bar.opacity_changed.connect(self.set_window_opacity)
         self.title_bar.panel_requested.connect(self.switch_panel)
 
+        # Overlay Visibility Panel signals
+        self.overlay_visibility_panel.transparency_changed.connect(self._on_transparency_changed)
+
         # Sidebar signals
         self.sidebar.panel_selected.connect(self.switch_panel)
 
         # AppSignals
         self._signals.panel_changed.connect(self.switch_panel)
         self._signals.toast_requested.connect(self.toast_manager.show_toast)
+
+        # Global Opacity Control Shortcuts (Ctrl+Q & Ctrl+W)
+        self._shortcut_decrease_opacity = QShortcut(QKeySequence("Ctrl+Q"), self)
+        self._shortcut_decrease_opacity.setContext(Qt.ShortcutContext.ApplicationShortcut)
+        self._shortcut_decrease_opacity.activated.connect(self.decrease_opacity)
+
+        self._shortcut_increase_opacity = QShortcut(QKeySequence("Ctrl+W"), self)
+        self._shortcut_increase_opacity.setContext(Qt.ShortcutContext.ApplicationShortcut)
+        self._shortcut_increase_opacity.activated.connect(self.increase_opacity)
+
+    def decrease_opacity(self) -> None:
+        """Decrease window opacity by 5% step (increase UI transparency, max 99.99%)."""
+        current_t = self.overlay_visibility_panel.get_transparency()
+        new_t = round(min(99.99, current_t + 5.0), 2)
+        self.overlay_visibility_panel.set_transparency(new_t)
+        self._on_transparency_changed(new_t)
+
+    def increase_opacity(self) -> None:
+        """Increase window opacity by 5% step (decrease UI transparency, min 0%)."""
+        current_t = self.overlay_visibility_panel.get_transparency()
+        new_t = round(max(0.0, current_t - 5.0), 2)
+        self.overlay_visibility_panel.set_transparency(new_t)
+        self._on_transparency_changed(new_t)
+
+    def _on_transparency_changed(self, transparency_percent: float) -> None:
+        """Handle transparency slider changes and apply Qt window opacity."""
+        clamped_t = round(max(0.0, min(99.99, float(transparency_percent))), 2)
+        opacity = 1.0 - (clamped_t / 100.0)
+        self.set_window_opacity(opacity)
+        self._config_manager.set("appearance.overlay_transparency", clamped_t)
 
     def switch_panel(self, panel_name: str) -> None:
         """Switch active panel stack view."""
@@ -193,8 +261,11 @@ class MainWindow(QMainWindow):
 
     def set_window_opacity(self, opacity: float) -> None:
         """Set window transparency level."""
-        clamped = max(0.1, min(1.0, opacity))
+        clamped = max(0.004, min(1.0, opacity))
         self.setWindowOpacity(clamped)
+        t_val = round(max(0.0, min(99.99, (1.0 - opacity) * 100.0)), 2)
+        if hasattr(self, "overlay_visibility_panel"):
+            self.overlay_visibility_panel.set_transparency(t_val)
         self._schedule_geometry_save()
 
     def set_always_on_top(self, is_pinned: bool) -> None:
@@ -220,6 +291,7 @@ class MainWindow(QMainWindow):
         if is_collapsed:
             self._expanded_height = self.height()
             self._content_widget.hide()
+            self.overlay_visibility_panel.hide()
             self.status_bar.hide()
             self.setFixedHeight(TITLE_BAR_HEIGHT)
         else:
@@ -227,9 +299,71 @@ class MainWindow(QMainWindow):
             self.setMinimumSize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
             self.setMaximumSize(16777215, 16777215)
             self._content_widget.show()
+            self.overlay_visibility_panel.show()
             self.status_bar.show()
 
         self._schedule_geometry_save()
+
+    def _register_global_hotkeys(self) -> None:
+        """Register Ctrl+Alt+E global hotkey for focus restoration."""
+        hwnd = int(self.winId()) if self.winId() else 0
+        if hwnd:
+            self._hotkey_registered = self._hotkey_manager.register_hotkey(
+                hwnd, HOTKEY_ID_CTRL_ALT_E, MOD_CONTROL | MOD_ALT, VK_E
+            )
+
+    def _unregister_global_hotkeys(self) -> None:
+        """Unregister global hotkeys on window destruction."""
+        if self._hotkey_registered:
+            hwnd = int(self.winId()) if self.winId() else 0
+            self._hotkey_manager.unregister_hotkey(hwnd, HOTKEY_ID_CTRL_ALT_E)
+            self._hotkey_registered = False
+
+    def restore_and_focus(self) -> None:
+        """Restore window from minimized state and force focus without altering transparency."""
+        if self.isMinimized():
+            self.showNormal()
+
+        if self._is_collapsed:
+            self.set_collapsed(False)
+
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        self.setFocus()
+
+        # Native Win32 foreground activation if on Windows
+        with contextlib.suppress(Exception):
+            hwnd = int(self.winId()) if self.winId() else 0
+            if hwnd:
+                user32 = getattr(ctypes.windll, "user32", None)
+                if user32:
+                    user32.ShowWindow(ctypes.c_void_p(hwnd), 9)  # SW_RESTORE = 9
+                    user32.SetForegroundWindow(ctypes.c_void_p(hwnd))
+
+    def nativeEvent(self, event_type: Any, message: Any) -> tuple[bool, int]:
+        """Intercept native Windows WM_HOTKEY events for Ctrl+Alt+E."""
+        if message:
+            with contextlib.suppress(Exception):
+                msg_ptr = int(message)
+                if msg_ptr:
+                    msg = MSG.from_address(msg_ptr)
+                    if msg.message == WM_HOTKEY and msg.wParam == HOTKEY_ID_CTRL_ALT_E:
+                        self.restore_and_focus()
+                        return True, 0
+        result = super().nativeEvent(event_type, message)
+        if isinstance(result, tuple) and len(result) == 2:
+            return bool(result[0]), int(result[1])
+        return False, 0
+
+    def showEvent(self, event: QShowEvent) -> None:
+        super().showEvent(event)
+        if not self._hotkey_registered:
+            self._register_global_hotkeys()
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        self._unregister_global_hotkeys()
+        super().closeEvent(event)
 
     def moveEvent(self, event: QMoveEvent) -> None:
         super().moveEvent(event)
@@ -258,7 +392,11 @@ class MainWindow(QMainWindow):
             self._json_store.write_atomic(self._geometry_file, geo)
 
     def _restore_geometry(self) -> None:
+        raw_t = float(self._config_manager.get("appearance.overlay_transparency", 0.0))
+        saved_transparency = round(min(99.99, max(0.0, raw_t)), 2)
+
         if not self._geometry_file.exists():
+            self.set_window_opacity(1.0 - (saved_transparency / 100.0))
             self.switch_panel(PanelName.SETTINGS)
             return
 
@@ -269,7 +407,7 @@ class MainWindow(QMainWindow):
             self.move(geo.x, geo.y)
             self.resize(geo.width, geo.height)
             self._expanded_height = geo.height
-            self.set_window_opacity(geo.opacity)
+            self.set_window_opacity(max(0.004, min(1.0, geo.opacity)))
             self.set_always_on_top(geo.is_pinned)
 
             if geo.is_collapsed:
@@ -277,4 +415,5 @@ class MainWindow(QMainWindow):
 
             self.switch_panel(geo.active_panel or PanelName.SETTINGS)
         except Exception:
+            self.set_window_opacity(1.0 - (saved_transparency / 100.0))
             self.switch_panel(PanelName.SETTINGS)

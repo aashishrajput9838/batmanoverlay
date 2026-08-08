@@ -1,0 +1,56 @@
+# Implementation Plan - HOTFIX-011 — Global Keyboard Shortcut to Restore BatmanOverlay Focus
+
+Implement a native Windows global hotkey (`Ctrl + E`) using `RegisterHotKey` to restore and activate keyboard focus to BatmanOverlay from any application or transparency level, without modifying opacity or window state settings.
+
+## Proposed Changes
+
+### Platform Layer
+
+#### [NEW] [global_hotkey.py](file:///c:/github/batmanoverlay.com/src/platform/global_hotkey.py)
+- Create `WindowsGlobalHotkeyManager` wrapping native `user32.RegisterHotKey` and `user32.UnregisterHotKey`.
+- Define constants: `MOD_CONTROL = 0x0002`, `VK_E = 0x45`, `WM_HOTKEY = 0x0312`, `HOTKEY_ID_CTRL_E = 0x011B`.
+- Log success/failure gracefully without crashing if `Ctrl+E` is already registered by another process.
+
+---
+
+### UI & Main Window Layer
+
+#### [MODIFY] [overlay_visibility_panel.py](file:///c:/github/batmanoverlay.com/src/ui/overlay_visibility_panel.py)
+- Update hint label to: `"Shortcuts: Ctrl+Q decrease opacity · Ctrl+W increase opacity · Ctrl+E focus"`.
+
+#### [MODIFY] [main_window.py](file:///c:/github/batmanoverlay.com/src/ui/main_window.py)
+- Register `Ctrl+E` global hotkey on startup using `WindowsGlobalHotkeyManager`.
+- Override `nativeEvent(self, event_type, message)`:
+  - Intercept `WM_HOTKEY` (`0x0312`) when `wParam == HOTKEY_ID_CTRL_E`.
+  - Invoke `restore_and_focus()`.
+- Implement `restore_and_focus()`:
+  - Restores window if minimized (`showNormal()` / `ShowWindow`).
+  - Brings `MainWindow` to front (`show()`, `raise_()`, `activateWindow()`, `SetForegroundWindow`, `setFocus()`).
+  - Preserves current opacity/transparency levels and all settings intact.
+- Unregister `Ctrl+E` hotkey in `closeEvent` and app shutdown.
+
+---
+
+### Automated Unit Tests
+
+#### [NEW] [test_global_hotkey.py](file:///c:/github/batmanoverlay.com/tests/unit/test_global_hotkey.py)
+- Test `WindowsGlobalHotkeyManager` registration success & failure handling using mocked ctypes.
+- Test `MainWindow.restore_and_focus()` restores window from minimized state and activates focus without mutating transparency.
+- Test `WM_HOTKEY` event handling in `nativeEvent`.
+- Test hotkey unregistration on window close.
+
+## Verification Plan
+
+### Automated Tests & Quality Gates
+- Run complete pytest suite & coverage:
+  ```powershell
+  python -m pytest --cov=src
+  ```
+- Run code quality checks:
+  ```powershell
+  python scripts/lint.py
+  ```
+- Run build pipeline:
+  ```powershell
+  python scripts/build.py
+  ```

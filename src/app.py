@@ -128,6 +128,11 @@ class BatmanOverlayApp(QApplication):
             session_manager=self.browser_session_manager,
         )
 
+        # 5.6 Typing Engine Container
+        from src.typing.engine import HumanTypingEngine
+
+        self.typing_engine = HumanTypingEngine(parent=self)
+
         # 6. Splash Screen
         self.splash_screen = SplashScreen()
         self.splash_screen.show()
@@ -140,6 +145,7 @@ class BatmanOverlayApp(QApplication):
             self.data_dir,
             clipboard_service=self.clipboard_service,
             browser_service=self.browser_service,
+            typing_engine=self.typing_engine,
         )
 
         # 8. Schedule Splash Transition

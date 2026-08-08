@@ -1,0 +1,62 @@
+# HOTFIX-006A — Runtime User-Agent Experiment Report
+
+## Executive Summary
+Per your instructions, a runtime experiment was conducted to validate whether stripping `QtWebEngine/6.11.1` from the HTTP User-Agent string enables Claude.ai's Google OAuth flow.
+
+No permanent code changes were made to the codebase.
+
+---
+
+## 1. Experiment Setup & Execution
+
+1. **User-Agent Configuration**:
+   - Original UA: `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) QtWebEngine/6.11.1 Chrome/140.0.0.0 Safari/537.36`
+   - Experiment UA: `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36`
+   - Only `QtWebEngine/6.11.1` token was removed. Chrome version, Windows version, Safari token, and AppleWebKit token were preserved.
+
+2. **Execution & Event Monitoring**:
+   - `https://claude.ai/login` loaded cleanly under the overridden User-Agent.
+   - Click event triggered on "Continue with Google" button.
+   - Captured JS console, window creation events (`createWindow`), navigation requests, and GSI/FedCM status.
+
+---
+
+## 2. Empirical Runtime Evidence
+
+### Console & Event Log Summary
+```
+HTTP USER-AGENT IN USE: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36
+
+[JS CONSOLE] [InfoMessageLevel] [O11Y] [DatadogRUM] Initialized [object Object]
+[JS CLICK RESULT]: CLICKED
+[JS CONSOLE] [ErrorMessageLevel] Provider's accounts list is empty. (line 0 in https://claude.ai/login)
+[JS CONSOLE] [ErrorMessageLevel] [GSI_LOGGER]: FedCM get() rejects with NetworkError: Error retrieving a token. (line 1 in https://assets-proxy.anthropic.com/claude-ai/v2/assets/v1/vendor-all-0-BO8sMdJO.js)
+```
+
+### Event Outcomes
+- `createWindow()` calls: `0`
+- Popup windows created: `0`
+- Accounts popup displayed: `None`
+- OAuth redirects triggered: `None`
+- Authentication outcome: **FAILED** (`FedCM get() rejects with NetworkError: Error retrieving a token`)
+
+---
+
+## 3. Experiment Result
+
+### **FAIL**
+
+### Technical Explanation
+Stripping `QtWebEngine/6.11.1` from the User-Agent header is **insufficient to enable Google OAuth on Claude.ai**.
+
+Google Identity Services (GSI SDK) invokes Chromium's C++ FedCM UI Delegate (`IdentityRequestDialogController`). In QtWebEngine's embedded C++ architecture, Chromium's native desktop FedCM UI account picker dialog is un-implemented / unavailable. `navigator.credentials.get()` rejects with `NetworkError: Error retrieving a token` regardless of the HTTP User-Agent header.
+
+---
+
+## 4. Restoration Confirmation
+
+Per Requirement 6:
+- All debug flag code and temporary overrides were **immediately removed**.
+- [profile_manager.py](file:///c:/github/batmanoverlay.com/src/browser/profile_manager.py) was **restored to its clean state**.
+- 103/103 `pytest` unit tests passing, 0 linters failing.
+- No permanent User-Agent spoofing was added.

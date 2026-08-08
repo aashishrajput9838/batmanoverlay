@@ -1,0 +1,149 @@
+# Implementation Plan — Sprint-004: Delayed Human Typing & Dynamic Target Acquisition Engine
+
+## Overview
+Sprint-004 delivers a production-grade, thread-safe, high-performance **Human Typing Engine** with **Delayed Countdown** and **Dynamic Target Acquisition & Validation**.
+
+The engine allows users to trigger a typing job, switch to any external application (Notepad, VS Code, Browser, ChatGPT, Google Docs, WhatsApp, etc.), place their cursor inside an editable field, and have typing execute automatically at the currently focused control after a configurable countdown.
+
+---
+
+## User Review Required
+
+> [!IMPORTANT]
+> **Browser Module Freeze**: Browser Foundation v1.0 remains 100% frozen. No files in `src/browser/` or `src/ui/browser_panel.py` will be modified.
+> 
+> **Zero-Dependency OS Target Acquisition & Platform Abstraction**: Target window detection (`GetForegroundWindow`), focused control validation (`GetGUIThreadInfo`, `GetFocus`), and OS keystroke sending (`SendInput` via `ctypes.windll.user32`) are encapsulated in `src/platform/windows_target.py` behind platform interfaces (`ITargetAcquirer`, `IKeyInputSender`). Unit tests utilize `MockTargetAcquirer` and `MockKeyInputSender` for 100% deterministic testing without requiring interactive desktop windows.
+
+---
+
+## Execution Pipeline Architecture
+
+```
+[User Clicks "Start Typing"]
+          │
+          ▼
+┌───────────────────┐
+│ Countdown Started │  (0s, 3s, 5s, 10s default, 15s, 30s, Custom)
+└─────────┬─────────┘  Emits: CountdownStarted, CountdownTick(remaining)
+          │
+          ▼
+┌───────────────────┐
+│    Target         │  (Executed IMMEDIATELY at T=0s before first keystroke)
+│  Acquisition      │  Detects current foreground window, process name, focused control handle
+└─────────┬─────────┘
+          │
+          ▼
+┌───────────────────┐  Safety Validation Rules:
+│    Target         │  ✓ Foreground window exists?
+│   Validation      │  ✓ Focused control exists?
+└────┬─────────┬────┘  ✓ Focused control accepts keyboard input / is editable?
+     │         │       ✗ Fails if Desktop, Taskbar, Explorer background, or disabled control
+ PASS│         │FAIL
+     │         └───► Emits: TargetValidationFailed("No editable text field is currently focused.")
+     ▼               Displays user alert; typing ABORTED safely.
+┌───────────────────┐
+│ Target Acquired   │  Emits: TargetAcquired(title, process, control_type)
+└─────────┬─────────┘
+          │
+          ▼
+┌───────────────────┐
+│  Typing Plan      │  Generates & executes TypingPlan (variable WPM, digraphs, jitter,
+│    Execution      │  typo simulation + backspace correction, multi-line, Unicode/emoji)
+└─────────┬─────────┘
+          │
+          ▼
+┌───────────────────┐
+│   Completion      │  Emits: Completed(job_id, duration_seconds)
+└───────────────────┘
+```
+
+---
+
+## Proposed Package Structure (`src/typing/` & `src/platform/`)
+
+```
+src/typing/
+├── __init__.py         # Package exports
+├── config.py           # TypingConfig (speed WPM, start_delay_seconds, mistake_prob, jitter, paste_threshold, seed)
+├── events.py           # TypingSignals Qt signal container & dataclass event payloads
+├── interfaces.py       # Protocols (ITypingSimulator, ITypingQueue, ITypingWorker, ITargetAcquirer, IKeyInputSender)
+├── simulator.py        # Core typing action plan generator (digraph timing, QWERTY typos, backspace, grapheme clusters)
+├── target.py           # Target validation & payload data structures (TargetInfo, ValidationResult)
+├── queue.py            # Thread-safe FIFO/Priority job queue with cancellation tokens
+├── worker.py           # QThread worker executing countdown timer, target acquisition, validation, & keystrokes
+├── scheduler.py        # Job orchestrator, worker lifecycle manager, and signal broadcaster
+└── engine.py           # Facade API (HumanTypingEngine) unifying configuration, execution, and public signals
+
+src/platform/
+├── target_acquirer.py  # Platform factory returning WindowsTargetAcquirer or MockTargetAcquirer
+├── windows_target.py   # Windows OS ctypes implementation (GetForegroundWindow, GetGUIThreadInfo, GetFocus, SendInput)
+└── mock_target.py      # Deterministic MockTargetAcquirer & MockKeyInputSender for unit testing
+```
+
+---
+
+## Detailed Component Specifications
+
+### 1. [config.py](file:///c:/github/batmanoverlay.com/src/typing/config.py)
+- `start_delay_seconds: float = 10.0` (Options: 0, 3, 5, 10, 15, 30, custom)
+- `speed_wpm: float = 60.0`
+- `min_delay_ms: float = 20.0`
+- `max_delay_ms: float = 180.0`
+- `initial_delay_ms: float = 300.0`
+- `mistake_probability: float = 0.03`
+- `correction_delay_ms: float = 150.0`
+- `typing_jitter: float = 0.25`
+- `paste_threshold_chars: int = 500`
+- `random_seed: int | None = None`
+- `pause_key: str = "Pause"`
+- `cancel_key: str = "Escape"`
+
+### 2. [events.py](file:///c:/github/batmanoverlay.com/src/typing/events.py)
+Qt Signals emitted by `TypingSignals`:
+- `countdown_started(str job_id, float duration_seconds)`
+- `countdown_tick(str job_id, int remaining_seconds)`
+- `countdown_cancelled(str job_id, str reason)`
+- `target_acquired(str job_id, str window_title, str process_name, str control_type)`
+- `target_validation_failed(str job_id, str reason)`
+- `typing_started(str job_id, str text)`
+- `typing_progress(str job_id, int current_index, int total_count, float progress_percent)`
+- `character_typed(str job_id, str char, str action_type)`
+- `paused(str job_id)`
+- `resumed(str job_id)`
+- `cancelled(str job_id, str reason)`
+- `completed(str job_id, float duration_seconds)`
+- `error_occurred(str job_id, str error_message)`
+
+### 3. [windows_target.py](file:///c:/github/batmanoverlay.com/src/platform/windows_target.py)
+Zero-dependency Windows `ctypes` target acquirer:
+- Calls `user32.GetForegroundWindow()` to get active window handle (`HWND`).
+- Calls `user32.GetGUIThreadInfo()` / `user32.GetFocus()` to retrieve the currently focused input control handle (`HWND`).
+- Retrieves window title (`GetWindowTextW`) and process executable name (`GetWindowThreadProcessId` + `QueryFullProcessImageNameW`).
+- Validates control class name (`Edit`, `RichEdit`, `Document`, `Chrome_WidgetWin_1`, `Scintilla`, etc.) and ensures window is NOT Desktop (`Progman`, `WorkerW`), Taskbar (`Shell_TrayWnd`), or Explorer background.
+- Synthesizes keystrokes via `SendInput` (`INPUT_KEYBOARD`).
+
+### 4. [worker.py](file:///c:/github/batmanoverlay.com/src/typing/worker.py)
+Worker execution flow in `QThread`:
+1. If `start_delay_seconds > 0`: Runs countdown timer loop (1s ticks). Emits `countdown_tick`. Checks cancellation on every tick.
+2. At `T = 0s`: Invokes `target_acquirer.acquire_and_validate_target()`.
+3. If validation fails: Emits `target_validation_failed(reason)` and stops safely.
+4. If validation passes: Emits `target_acquired`, then executes `TypingPlan` step by step with human jitter delays.
+
+---
+
+## Verification Plan
+
+### Automated Unit Tests (`tests/unit/`)
+- `test_typing_config.py`: Default values, delay bounds, Pydantic validations.
+- `test_typing_simulator.py`: Action sequence generation, digraph timings, QWERTY mistake & backspace physics, grapheme cluster Unicode/emoji support, multi-line, paste threshold fallback.
+- `test_typing_target_validation.py`: Safety rules verification (Desktop, Taskbar, non-editable control rejection vs valid editor acceptance).
+- `test_typing_worker_countdown.py`: Countdown ticks, cancellation during countdown, dynamic target acquisition timing (verifying target is NOT cached before countdown ends).
+- `test_typing_queue.py`: Thread-safe FIFO/Priority job queuing, job cancellation tokens.
+- `test_typing_engine.py`: Facade API integration, signal broadcasts, end-to-end execution.
+
+Target test coverage: **≥95.0% coverage** on `src/typing/` and `src/platform/`.
+
+### Quality Gates
+- `python scripts/lint.py` (Ruff clean, Mypy `--strict` clean, import-linter clean).
+- `python -m pytest --cov=src/typing --cov=src/platform --cov-report=term-missing`.
+- `python scripts/build.py` (Executable build & boot verification).

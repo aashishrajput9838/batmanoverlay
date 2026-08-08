@@ -1,0 +1,55 @@
+# Implementation Plan - HOTFIX-010 — Keyboard Shortcuts for Overlay Opacity Control
+
+Implement `Ctrl + Q` and `Ctrl + W` global application keyboard shortcuts to decrease and increase overlay opacity in 5% steps.
+
+## Requirements & Semantics
+
+> [!IMPORTANT]
+> - **`Ctrl + Q`**: Decreases window opacity by 5% $\rightarrow$ UI Transparency $T = \min(100, \text{current} + 5)$.
+> - **`Ctrl + W`**: Increases window opacity by 5% $\rightarrow$ UI Transparency $T = \max(0, \text{current} - 5)$.
+> - Shortcuts must work application-wide regardless of focused child widget inside BatmanOverlay.
+> - Slider, numeric display, Qt window opacity, and `ConfigManager` settings remain synchronized.
+
+## Proposed Changes
+
+### UI Components
+
+#### [MODIFY] [overlay_visibility_panel.py](file:///c:/github/batmanoverlay.com/src/ui/overlay_visibility_panel.py)
+- Add a subtle hint label: `"Shortcuts: Ctrl+Q decrease opacity · Ctrl+W increase opacity"`.
+
+#### [MODIFY] [main_window.py](file:///c:/github/batmanoverlay.com/src/ui/main_window.py)
+- Instantiate two application-scoped `QShortcut` instances (`Ctrl+Q` and `Ctrl+W`) bound to `MainWindow`.
+- Implement `decrease_opacity()` and `increase_opacity()` methods:
+  - `decrease_opacity()`: increases transparency by 5% (clamped at 100).
+  - `increase_opacity()`: decreases transparency by 5% (clamped at 0).
+- Synchronize slider, window opacity, and `ConfigManager` persistence.
+
+---
+
+### Automated Unit Tests
+
+#### [MODIFY] [test_overlay_visibility_panel.py](file:///c:/github/batmanoverlay.com/tests/unit/test_overlay_visibility_panel.py)
+- Add tests for:
+  - `Ctrl+Q` decreases opacity (transparency +5%).
+  - `Ctrl+W` increases opacity (transparency -5%).
+  - `Ctrl+Q` from 0% transparency reaches 5%.
+  - `Ctrl+Q` clamps cleanly at 100% transparency.
+  - `Ctrl+W` from 100% transparency reaches 95%.
+  - `Ctrl+W` clamps cleanly at 0% transparency.
+  - Synchronization between shortcut activations and slider value/persistence.
+
+## Verification Plan
+
+### Automated Tests & Quality Gates
+- Run full pytest suite & coverage:
+  ```powershell
+  python -m pytest --cov=src
+  ```
+- Run code quality checks:
+  ```powershell
+  python scripts/lint.py
+  ```
+- Run build pipeline:
+  ```powershell
+  python scripts/build.py
+  ```

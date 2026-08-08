@@ -1,0 +1,64 @@
+# Implementation Plan - HOTFIX-012 — Limit Maximum Overlay Transparency to 99%
+
+Limit the maximum overlay transparency to 99% so BatmanOverlay is never completely invisible (0.01 minimum opacity).
+
+## User Review Required
+
+> [!IMPORTANT]
+> The transparency range is now strictly constrained to 0% – 99%. Any legacy settings containing 100% transparency will be automatically normalized to 99% on application startup without validation crashes.
+
+## Proposed Changes
+
+### Models & Settings Layer
+
+#### [MODIFY] [settings.py](file:///c:/github/batmanoverlay.com/src/models/settings.py)
+- Change `overlay_transparency: int = Field(default=0, ge=0, le=99)`.
+- Add a field validator for `overlay_transparency` to clamp input values $> 99$ to `99` (handling legacy `100%` setting gracefully).
+
+---
+
+### UI Layer
+
+#### [MODIFY] [overlay_visibility_panel.py](file:///c:/github/batmanoverlay.com/src/ui/overlay_visibility_panel.py)
+- Set slider maximum to `99`.
+- Update range label text to `0%` and `99%`.
+- Update helper methods to clamp set values within `[0, 99]`.
+
+#### [MODIFY] [main_window.py](file:///c:/github/batmanoverlay.com/src/ui/main_window.py)
+- Update `Ctrl+Q` opacity step handler: `min(99, current + 5)`.
+- Ensure boundary clamping strictly respects upper bound `99%`.
+
+---
+
+### Unit Tests
+
+#### [MODIFY] [test_overlay_visibility_panel.py](file:///c:/github/batmanoverlay.com/tests/unit/test_overlay_visibility_panel.py)
+- Update slider max tests to `99`.
+- Add test for setting 99% transparency yielding `windowOpacity = 0.01`.
+- Add test for `Ctrl+Q` clamping from 95% -> 99% and 99% -> 99%.
+- Add test for legacy settings containing `100%` normalizing to `99%`.
+
+#### [MODIFY] [test_models.py](file:///c:/github/batmanoverlay.com/tests/unit/test_models.py)
+- Update bounds test for `overlay_transparency` (ge=0, le=99).
+
+## Verification Plan
+
+### Automated Tests & Quality Gates
+- Run complete pytest suite & coverage:
+  ```powershell
+  python -m pytest --cov=src
+  ```
+- Run code quality checks:
+  ```powershell
+  python scripts/lint.py
+  ```
+- Run build pipeline:
+  ```powershell
+  python scripts/build.py
+  ```
+
+### Manual Verification
+- Launch built `dist/batmanoverlay/batmanoverlay.exe`.
+- Move slider to maximum (99%). Verify window remains faintly visible (0.01 opacity).
+- Press `Ctrl+Q` repeatedly from 95% -> verify it stops at 99%.
+- Press `Ctrl+W` from 99% -> verify it steps to 94%.

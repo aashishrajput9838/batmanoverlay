@@ -1,6 +1,8 @@
 """AppSettings Pydantic data model hierarchy."""
 
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class GeneralSettings(BaseModel):
@@ -23,6 +25,15 @@ class AppearanceSettings(BaseModel):
     font_family: str = "Inter"
     font_scale: float = Field(default=1.0, ge=0.8, le=2.0)
     default_opacity: float = Field(default=1.0, ge=0.1, le=1.0)
+    overlay_transparency: float = Field(default=0.0, ge=0.0, le=99.99)
+
+    @field_validator("overlay_transparency", mode="before")
+    @classmethod
+    def normalize_transparency(cls, v: Any) -> float:
+        """Clamp legacy setting values > 99.99 down to 99.99."""
+        if isinstance(v, (int, float)):
+            return round(max(0.0, min(99.99, float(v))), 2)
+        return 0.0
 
 
 class BrowserSettings(BaseModel):

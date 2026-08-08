@@ -1,0 +1,35 @@
+# Implementation Plan - HOTFIX-013 — Remove Console Window From Production Executable
+
+Configure PyInstaller build specification to produce a windowed GUI application (`console=False`) that launches without a visible CMD console window on Windows.
+
+## Proposed Changes
+
+### Packaging Layer
+
+#### [MODIFY] [batmanoverlay.spec](file:///c:/github/batmanoverlay.com/batmanoverlay.spec)
+- Change `console=True` to `console=False` in `EXE(...)` block.
+- This instructs PyInstaller to set the PE header subsystem to `IMAGE_SUBSYSTEM_WINDOWS_GUI` instead of `IMAGE_SUBSYSTEM_WINDOWS_CUI`.
+
+---
+
+## Verification Plan
+
+### Automated Tests & Quality Gates
+- Run complete pytest suite & coverage:
+  ```powershell
+  python -m pytest --cov=src
+  ```
+- Run code quality checks:
+  ```powershell
+  python scripts/lint.py
+  ```
+- Run build pipeline:
+  ```powershell
+  python scripts/build.py
+  ```
+
+### Manual Verification
+- Launch `dist/batmanoverlay/batmanoverlay.exe` from Windows Explorer / Command Line.
+- Verify NO black CMD console window opens.
+- Verify BatmanOverlay GUI launches normally.
+- Verify all shortcuts (`Ctrl+Q`, `Ctrl+W`, `Ctrl+Alt+E`) and overlay visibility range (0–99%) function cleanly.

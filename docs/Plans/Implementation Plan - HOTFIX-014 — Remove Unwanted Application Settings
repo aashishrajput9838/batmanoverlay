@@ -1,0 +1,58 @@
+# Implementation Plan - HOTFIX-014 — Remove Unwanted Application Settings
+
+Simplify the Application Settings UI screen by removing non-essential user-facing settings sections while preserving full backward compatibility for saved settings and keeping the Overlay Visibility controls fully functional.
+
+## Proposed Changes
+
+### UI Presentation Layer
+
+#### [MODIFY] [settings_panel.py](file:///c:/github/batmanoverlay.com/src/ui/settings_panel.py)
+- Remove user-facing settings widgets and group boxes:
+  - Appearance Theme group box (`_combo_theme`, `_spin_font_scale`)
+  - General Options group box (`_chk_updates`, `_chk_restore`)
+  - Typing Engine Settings group box (`_spin_speed`, `_spin_pre_delay`, `_chk_jitter`)
+- Embed `OverlayVisibilityPanel` directly into `SettingsPanel` layout under the "Application Settings" header.
+- Connect `OverlayVisibilityPanel` transparency changes to `ConfigManager` (`appearance.overlay_transparency`).
+- Ensure vertical spacing, margins, and scroll area layout are clean, compact, and visually balanced.
+
+---
+
+### Data Models & Backward Compatibility Layer
+
+#### [MODIFY] [settings.py](file:///c:/github/batmanoverlay.com/src/models/settings.py)
+- Preserve default field definitions in `AppearanceSettings`, `GeneralSettings`, and `TypingSettings` to ensure 100% backward compatibility when loading legacy `settings.json` files containing obsolete fields (`theme`, `font_scale`, `check_updates`, `restore_session`, `default_speed`, `pre_typing_delay`, `jitter_enabled`).
+
+---
+
+### Unit Tests
+
+#### [MODIFY] [test_settings_panel.py](file:///c:/github/batmanoverlay.com/tests/unit/test_settings_panel.py)
+- Update test cases to verify:
+  - Appearance Theme, General Options, and Typing Engine controls are no longer rendered in `SettingsPanel`.
+  - `OverlayVisibilityPanel` is present inside `SettingsPanel`.
+  - Updating transparency in `SettingsPanel` updates `ConfigManager` and emits transparency signals.
+  - Legacy `settings.json` containing obsolete fields loads without validation errors.
+
+## Verification Plan
+
+### Automated Tests & Quality Gates
+- Run complete pytest suite & coverage:
+  ```powershell
+  python -m pytest --cov=src
+  ```
+- Run code quality checks:
+  ```powershell
+  python scripts/lint.py
+  ```
+- Run build pipeline:
+  ```powershell
+  python scripts/build.py
+  ```
+
+### Manual Verification
+- Launch `dist/batmanoverlay/batmanoverlay.exe`.
+- Navigate to Application Settings screen.
+- Verify screen is minimal and clean, displaying only header and Overlay Visibility panel (0% – 99.99%).
+- Verify no empty group boxes or orphan widgets remain.
+- Test slider and Reset button in Settings screen.
+- Launch with a legacy `settings.json` file containing `theme` and `default_speed` -> verify clean startup without crashes.

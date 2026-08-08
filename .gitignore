@@ -30,6 +30,10 @@ MANIFEST
 *.manifest
 release/
 .build.lock
+batmanoverlay_test.spec
+build_tmp/
+test_build/
+test_dist/
 
 # Installer logs
 pip-log.txt

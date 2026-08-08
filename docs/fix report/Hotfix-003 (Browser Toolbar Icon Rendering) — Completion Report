@@ -1,0 +1,107 @@
+# Hotfix-003 (Browser Toolbar Icon Rendering) — Completion Report
+
+## 1. Root Cause Analysis (RCA)
+
+### The Issue
+During manual QA, the Browser panel toolbar displayed square box placeholders `[ □ ] [ □ ] [ ⚙ ] ...` instead of proper browser navigation icons (Back ⬅, Forward ➡, Reload 🔄, Security Shield 🛡️).
+
+### Root Cause
+1. **Unregistered Icon Keys**: In `BrowserPanel`, the navigation buttons requested icon names `"chevron_left"`, `"chevron_right"`, `"shield"`, and `"stop"`.
+2. **`match name:` Fallback**: `IconManager._create_vector_icon()` in `src/ui/icons.py` lacked `case` statements for `"chevron_left"`, `"chevron_right"`, `"shield"`, `"stop"`, `"home"`, `"delete"`, `"copy"`, `"star"`, and `"star_filled"`.
+3. **Square Box Drawing**: Every unmatched icon key hit `case _:` in `IconManager`, which literally executed `painter.drawRect(rect)` — drawing a hollow 18x18 square box `[ □ ]`!
+4. **Mismatched Icon Key**: `self.btn_reload` was initialized with `IconManager.get_icon("settings")` instead of `"reload"`, rendering a gear icon `[ ⚙ ]` instead of a circular reload arrow.
+
+---
+
+## 2. Technical Solution Implemented
+
+### Expanded `IconManager` Vector Engine
+- Implemented crisp anti-aliased vector paths scaled for High-DPI (48x48 canvas mapped to 24x24 grid with 2.5pt stroke width) for:
+  - `chevron_left` — Left arrow ⬅ (Back button)
+  - `chevron_right` — Right arrow ➡ (Forward button)
+  - `reload` — Circular arc with arrow 🔄 (Reload button)
+  - `stop` — Cross 🛑 (Stop loading button)
+  - `shield` / `lock` — Security badge 🛡️ (HTTPS security indicator)
+  - `home` — House icon 🏠 (Home navigation button)
+  - `delete` — Trash can 🗑️
+  - `copy` — Overlapping rectangles 📋
+  - `star` / `star_filled` — Favorite star ⭐
+- **Resource Fallback**: Added `_try_load_file_icon()` to check `resources/icons/{name}.svg` or `.png` before falling back to high-precision vector rendering.
+- **Disabled State**: Added semi-transparent 35% opacity pixmap rendering for `QIcon.Mode.Disabled`.
+
+### Refactored `BrowserPanel`
+- **Back Button**: Uses `chevron_left` icon, tooltip `Back (Alt+Left)`, accessible name `Navigate Back`, min size 32x32px.
+- **Forward Button**: Uses `chevron_right` icon, tooltip `Forward (Alt+Right)`, accessible name `Navigate Forward`, min size 32x32px.
+- **Reload / Stop Button**:
+  - Idle state: Uses `reload` icon, tooltip `Reload (F5)`, accessible name `Reload Page`.
+  - Loading state: Dynamically switches to `stop` icon, tooltip `Stop Loading (Esc)`, accessible name `Stop Loading`.
+- **Home Button**: Uses `home` icon, tooltip `Home`, accessible name `Navigate Home`, min size 32x32px.
+- **Security Indicator**:
+  - HTTPS: Uses `shield` icon tinted in `#A6E3A1` (Catppuccin Green).
+  - Non-HTTPS / Local: Uses `info` icon tinted in `#F9E2AF` (Catppuccin Amber).
+
+### QSS Toolbar Button Styling
+Added `QToolButton` styles to `resources/themes/dark.qss` ensuring:
+- 32x32px minimum hit target area
+- Hover background `#313244`
+- Pressed background `#45475A`
+- Disabled opacity `0.35`
+
+---
+
+## 3. Automated Icon Validation Audit
+
+| Icon Key | Target Component | Vector Path Status | QIcon.isNull() | Pixmap (24x24) |
+|---|---|---|---|---|
+| `chevron_left` | Browser Back | ✅ High-DPI Path | `False` | Valid |
+| `chevron_right` | Browser Forward | ✅ High-DPI Path | `False` | Valid |
+| `reload` | Browser Reload | ✅ High-DPI Path | `False` | Valid |
+| `stop` | Browser Stop | ✅ High-DPI Path | `False` | Valid |
+| `shield` | Browser HTTPS Security | ✅ High-DPI Path | `False` | Valid |
+| `home` | Browser Home | ✅ High-DPI Path | `False` | Valid |
+| `settings` | TitleBar / Config | ✅ High-DPI Path | `False` | Valid |
+| `search` | TitleBar / Filter | ✅ High-DPI Path | `False` | Valid |
+| `delete` | Clipboard Trash | ✅ High-DPI Path | `False` | Valid |
+| `copy` | Clipboard Duplicate | ✅ High-DPI Path | `False` | Valid |
+| `star` | Clipboard Favorite | ✅ High-DPI Path | `False` | Valid |
+
+---
+
+## 4. Quality Gate Summary
+
+| Gate | Requirement | Result |
+|---|---|---|
+| **pytest** | 100% passing | ✅ 101/101 passed |
+| **coverage** | ≥80.0% | ✅ 84.51% |
+| **mypy** | 0 type errors | ✅ 0 errors |
+| **ruff** | 0 linting errors | ✅ 0 errors |
+| **import-linter** | 100% compliance | ✅ 2/2 contracts kept |
+| **Build Execution** | OneDir build | ✅ SUCCESS (`dist/batmanoverlay/batmanoverlay.exe`) |
+
+---
+
+## 5. Modified Files
+
+1. [icons.py](file:///c:/github/batmanoverlay.com/src/ui/icons.py) — Expanded vector icon engine with chevron_left, chevron_right, reload, stop, shield, home, delete, copy, star, file fallback, and disabled state support.
+2. [browser_panel.py](file:///c:/github/batmanoverlay.com/src/ui/browser_panel.py) — Connected toolbar icons, dynamic reload/stop switching, security badge colors, and accessible names.
+3. [dark.qss](file:///c:/github/batmanoverlay.com/resources/themes/dark.qss) — Added `QToolButton` hover, pressed, and disabled QSS styling.
+4. [test_icons.py](file:///c:/github/batmanoverlay.com/tests/unit/test_icons.py) — Unit tests for all 28 IconManager icons, caching, and disabled state rendering.
+5. [test_browser_panel.py](file:///c:/github/batmanoverlay.com/tests/ui/test_browser_panel.py) — UI tests for toolbar icon rendering, accessibility names, and state transitions.
+
+---
+
+## 6. Stop Condition & Manual QA Verification Instructions
+
+> [!IMPORTANT]
+> **HOTFIX-003 COMPLETE — Execution Stopped**
+> 
+> **Manual QA Checklist**:
+> 1. Launch `dist/batmanoverlay/batmanoverlay.exe` or `python src/main.py`.
+> 2. Open the **Browser panel**.
+> 3. Verify the toolbar buttons:
+>    - ⬅ **Back** (Disabled on initial load, 35% opacity)
+>    - ➡ **Forward** (Disabled on initial load, 35% opacity)
+>    - 🔄 **Reload** (Circular arrow icon, changes to 🛑 **Stop** when loading)
+>    - 🏠 **Home** (House icon)
+>    - 🛡️ **Security Indicator** (Green shield on HTTPS sites, amber info badge on local/HTTP)
+> 4. Verify hover and pressed background states on all toolbar buttons.

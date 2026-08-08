@@ -1,0 +1,69 @@
+# Implementation Plan - HOTFIX-013 — Increase Maximum Overlay Transparency to 99.99%
+
+Update the Overlay Visibility transparency system to support floating-point transparency from `0.0%` to `99.99%` (minimum Qt window opacity `0.0001`).
+
+## User Review Required
+
+> [!IMPORTANT]
+> The transparency model type is updated from integer `int` to float `float` with range `0.0` to `99.99`. Legacy values `> 99.99` (such as `100`) will be automatically normalized to `99.99` on application startup.
+
+## Proposed Changes
+
+### Models & Settings Layer
+
+#### [MODIFY] [settings.py](file:///c:/github/batmanoverlay.com/src/models/settings.py)
+- Change `overlay_transparency: float = Field(default=0.0, ge=0.0, le=99.99)`.
+- Update `@field_validator("overlay_transparency", mode="before")` to clamp inputs $> 99.99$ to `99.99` while supporting floats and integers.
+
+---
+
+### UI Layer
+
+#### [MODIFY] [overlay_visibility_panel.py](file:///c:/github/batmanoverlay.com/src/ui/overlay_visibility_panel.py)
+- Change signal to `transparency_changed = Signal(float)`.
+- Scale `QSlider` integer range to `0` .. `9999` (`slider.value() / 100.0` = float transparency).
+- Update right endpoint label to `"99.99% (Max Transparency)"`.
+- Update text display formatting to format integers as `0%`, `50%`, `99%` and floats as `99.99%`, `94.99%`.
+- Update `get_transparency() -> float` and `set_transparency(value: float)`.
+
+#### [MODIFY] [main_window.py](file:///c:/github/batmanoverlay.com/src/ui/main_window.py)
+- Update `decrease_opacity()` (`Ctrl+Q`): `new_t = min(99.99, current_t + 5.0)`.
+- Update `_on_transparency_changed(transparency_percent: float)`: `opacity = 1.0 - (clamped_t / 100.0)`.
+- Update `set_window_opacity(opacity)`: clamp minimum Qt window opacity to `0.0001`.
+- Update `_restore_geometry()`: normalize saved transparency to `min(99.99, max(0.0, float(saved_transparency)))`.
+
+---
+
+### Unit Tests
+
+#### [MODIFY] [test_overlay_visibility_panel.py](file:///c:/github/batmanoverlay.com/tests/unit/test_overlay_visibility_panel.py)
+- Update tests to verify `0.0` to `99.99` float range.
+- Test `99.99%` transparency yielding Qt window opacity `0.0001`.
+- Test legacy `100` normalization to `99.99`.
+- Test `Ctrl+Q` stepping from 95% -> 99.99% and clamping at 99.99%.
+- Test `Ctrl+W` stepping from 99.99% -> 94.99%.
+
+#### [MODIFY] [test_models.py](file:///c:/github/batmanoverlay.com/tests/unit/test_models.py)
+- Update `AppearanceSettings` bounds test for `overlay_transparency` (ge=0.0, le=99.99).
+
+## Verification Plan
+
+### Automated Tests & Quality Gates
+- Run complete pytest suite & coverage:
+  ```powershell
+  python -m pytest --cov=src
+  ```
+- Run code quality checks:
+  ```powershell
+  python scripts/lint.py
+  ```
+- Run build pipeline:
+  ```powershell
+  python scripts/build.py
+  ```
+
+### Manual Verification
+- Launch `dist/batmanoverlay/batmanoverlay.exe`.
+- Move slider to maximum (99.99%). Verify window opacity is `0.0001` (faintly visible, never 0.0).
+- Press `Ctrl+Q` from 95% -> verify it stops at 99.99%.
+- Press `Ctrl+W` from 99.99% -> verify it steps to 94.99%.

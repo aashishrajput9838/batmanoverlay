@@ -1,0 +1,116 @@
+# Implementation Plan — Sprint-004: Human Typing Engine Architecture & Production Implementation
+
+## Overview
+Sprint-004 delivers a production-grade, thread-safe, high-performance **Human Typing Engine** for batmanoverlay. The engine simulates realistic human typing characteristics (variable typing speed WPM/CPM, natural jitter, mistake simulation with backspace correction, digraph delays, multi-line & emoji/Unicode support, auto-paste threshold for large texts, pause/resume/cancel semantics, and job queuing) without any platform-specific coupling or UI dependencies.
+
+---
+
+## User Review Required
+
+> [!IMPORTANT]
+> **Browser Module Freeze**: Browser Foundation v1.0 is completely frozen. No changes will be made to `src/browser/` or `src/ui/browser_panel.py`.
+> 
+> **SOLID Principles & Decoupled Architecture**: All typing algorithms are isolated inside `src/typing/`. UI interaction (e.g. typing panel / hotkey triggers) will communicate with the engine purely via Qt Signals and Protocol interfaces.
+
+---
+
+## Proposed Changes
+
+### Module Architecture: `src/typing/`
+
+```
+src/typing/
+├── __init__.py         # Package exports
+├── config.py           # TypingConfig data model (speed, delays, mistake probability, paste threshold, seed)
+├── events.py           # TypingSignals Qt signal container & dataclass event payloads
+├── interfaces.py       # Protocols (ITypingSimulator, ITypingWorker, ITypingScheduler, ITypingQueue)
+├── simulator.py        # Core human typing action generator (digraph timing, mistake generation, grapheme clusters)
+├── queue.py            # Thread-safe FIFO/Priority job queue with job cancellation tokens
+├── worker.py           # QThread worker executing action steps with microsecond-resolution timing & pause/cancel locks
+├── scheduler.py        # Job orchestrator, thread pool manager, and event signal broadcaster
+└── engine.py           # Facade API unifying configuration, scheduler, worker lifecycle, and public Qt signals
+```
+
+---
+
+### [Component Details]
+
+#### [NEW] [config.py](file:///c:/github/batmanoverlay.com/src/typing/config.py)
+- Defines `TypingConfig` (Pydantic model):
+  - `speed_wpm: float = 60.0` (Words Per Minute target)
+  - `min_delay_ms: float = 20.0`
+  - `max_delay_ms: float = 180.0`
+  - `initial_delay_ms: float = 300.0`
+  - `mistake_probability: float = 0.03` (3% chance of typo)
+  - `correction_delay_ms: float = 150.0`
+  - `typing_jitter: float = 0.25`
+  - `paste_threshold_chars: int = 500` (Switches to paste mode if text length exceeds threshold)
+  - `random_seed: int | None = None` (For deterministic test reproducibility)
+  - `pause_key: str = "Pause"`
+  - `cancel_key: str = "Escape"`
+
+#### [NEW] [events.py](file:///c:/github/batmanoverlay.com/src/typing/events.py)
+- Defines `TypingAction` enum (`TYPE_CHAR`, `BACKSPACE`, `PAUSE`, `PASTE_CHUNK`).
+- Defines `TypingStep` data model (char, action_type, delay_ms).
+- Defines `TypingSignals(QObject)` emitting Qt signals:
+  - `typing_started(str job_id, str text)`
+  - `typing_progress(str job_id, int current_index, int total_count, float progress_percent)`
+  - `character_typed(str job_id, str char, str action_type)`
+  - `paused(str job_id)`
+  - `resumed(str job_id)`
+  - `cancelled(str job_id)`
+  - `completed(str job_id, float duration_seconds)`
+  - `error_occurred(str job_id, str error_message)`
+
+#### [NEW] [interfaces.py](file:///c:/github/batmanoverlay.com/src/typing/interfaces.py)
+- Defines Python `@runtime_checkable` protocols:
+  - `ITypingSimulator`
+  - `ITypingQueue`
+  - `ITypingWorker`
+  - `ITypingScheduler`
+
+#### [NEW] [simulator.py](file:///c:/github/batmanoverlay.com/src/typing/simulator.py)
+- Core algorithm engine converting raw string into a list of `TypingStep` objects:
+  - Grapheme cluster parsing (full support for complex Unicode, multi-code-point emojis like 👨‍👩‍👧‍👦, accent marks, and multi-line `\r\n`).
+  - QWERTY key proximity lookup for realistic typo substitution (e.g. typing `t` instead of `r`).
+  - Natural mistake workflow: types typo char -> pauses (`correction_delay_ms`) -> types backspace step -> types correct char.
+  - Variable Gaussian/Log-normal delay generator respecting WPM/CPM speed, character difficulty, space/punctuation pauses, and jitter bounds.
+  - Large text paste mode generation when `len(text) >= paste_threshold_chars`.
+
+#### [NEW] [queue.py](file:///c:/github/batmanoverlay.com/src/typing/queue.py)
+- `TypingJob` data structure (job_id, text, target_widget_id/callback, status, config_override).
+- Thread-safe `TypingQueue` using `threading.Lock()` / `queue.PriorityQueue()` supporting push, pop, peek, cancel_job, clear, and list_jobs.
+
+#### [NEW] [worker.py](file:///c:/github/batmanoverlay.com/src/typing/worker.py)
+- `QThread`-based `TypingWorker` driving actual step execution:
+  - Uses high-precision `QElapsedTimer` / `time.perf_counter()`.
+  - Implements thread-safe Pause/Resume mutex lock (`QWaitCondition` / `threading.Event`).
+  - Checks cancellation flag per character step for instantaneous cancellation responsiveness (<5ms).
+
+#### [NEW] [scheduler.py](file:///c:/github/batmanoverlay.com/src/typing/scheduler.py)
+- High-level orchestrator connecting `TypingQueue` to `TypingWorker`.
+- Manages job transitions, error handling, worker lifecycle, and signal emission.
+
+#### [NEW] [engine.py](file:///c:/github/batmanoverlay.com/src/typing/engine.py)
+- Public Facade API for batmanoverlay:
+  - `type_text(text: str, config: TypingConfig | None = None) -> str` (Returns job_id)
+  - `pause()` / `resume()` / `cancel(job_id: str | None = None)` / `clear_queue()`
+  - Exposed signals accessor `signals: TypingSignals`.
+
+---
+
+## Verification Plan
+
+### Automated Unit Tests
+- Create `tests/unit/test_typing_config.py` (Bounds, validation, defaults).
+- Create `tests/unit/test_typing_simulator.py` (Action sequence generation, WPM math, typo simulation, Unicode/emoji graphemes, multi-line, paste threshold).
+- Create `tests/unit/test_typing_queue.py` (Thread safety, priority ordering, job cancellation).
+- Create `tests/unit/test_typing_worker.py` (Execution timing, pause/resume lock, instantaneous cancellation).
+- Create `tests/unit/test_typing_engine.py` (End-to-end facade API execution, signal emissions, error handling).
+
+Target coverage: **>95% coverage** on `src/typing/`.
+
+### Quality Gates
+- `python scripts/lint.py` (Ruff 0 errors, Mypy `--strict` 0 errors, import-linter 100% pass).
+- `python -m pytest --cov=src/typing --cov-report=term-missing` (>95% coverage).
+- `python scripts/build.py` (Executable build & bootloader verification).

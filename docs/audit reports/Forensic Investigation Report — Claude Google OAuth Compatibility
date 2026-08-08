@@ -1,0 +1,72 @@
+# Forensic Investigation Report — Claude Google OAuth Compatibility
+
+## Executive Summary
+A forensic investigation was conducted into why clicking **"Continue with Google"** on `https://claude.ai/login` does nothing, while Google Accounts, ChatGPT, and GitHub OAuth work normally.
+
+Through runtime event tracing, JavaScript console logging, and `QWebEnginePage` method instrumentation, we have **identified the exact failing component and root cause**.
+
+Per your instructions, **no speculative code changes have been made**.
+
+---
+
+## 1. Investigation Findings (In Required Order)
+
+### Item 1: `QWebEnginePage.createWindow()` Implementation
+- `QWebEnginePage.createWindow()` was **not invoked** when clicking "Continue with Google".
+- **Reason**: Claude.ai does not open a standard popup window (`window.open()`) or `target="_blank"` link for Google Sign-In. It uses the **Google Identity Services (GSI) JavaScript SDK** (`https://accounts.google.com/gsi/client`).
+
+### Item 2: Event Invocations (`createWindow`, `newWindowRequested`, `acceptNavigationRequest`)
+- `createWindow()`: `0` calls.
+- `newWindowRequested`: `0` emissions.
+- `acceptNavigationRequest()`: Navigated to `https://claude.ai/login`, loaded `https://newassets.hcaptcha.com/captcha/...`, loaded `https://accounts.google.com/gsi/client`. No navigation request was generated when clicking the button.
+
+### Item 3: JavaScript Console Output (`javaScriptConsoleMessage`)
+Console logs captured upon page load and button click:
+
+```
+[JS CONSOLE] [InfoMessageLevel] [GSI_LOGGER]: Your client application uses one of the Google One Tap prompt UI status methods that may stop functioning when FedCM becomes mandatory...
+[JS CONSOLE] [WarningMessageLevel] [GSI_LOGGER]: google.accounts.id.initialize() is called multiple times...
+[JS CONSOLE] [ErrorMessageLevel] [GSI_LOGGER]: FedCM get() rejects with NotAllowedError: Only one navigator.credentials.get request may be outstanding at one time.
+[JS CONSOLE] [InfoMessageLevel] Prompt dismissed. API exponential cool down n
+[JS CONSOLE] [ErrorMessageLevel] Provider's accounts list is empty.
+```
+
+### Item 4: `window.open()` Requests
+- No `window.open()` calls were initiated by GSI SDK. GSI attempts to call `navigator.credentials.get()` (FedCM API) or render an embedded Google Sign-In iframe.
+
+### Item 5: `QWebEngineSettings` Inspection
+```
+  JavascriptEnabled                     : True
+  JavascriptCanOpenWindows              : True
+  AllowWindowActivationFromJavaScript   : False (Default QtWebEngine setting)
+  LocalStorageEnabled                   : True
+  LocalContentCanAccessRemoteUrls       : False
+  AllowRunningInsecureContent           : False
+```
+
+### Item 6: Comparison with Standard Chrome Browser
+- **Chrome Desktop**: GSI detects Chrome User-Agent, queries Chrome's native account manager via FedCM, and displays the Google Account selector overlay.
+- **QtWebEngine**: GSI detects `QtWebEngine` in the User-Agent header, fails FedCM credential retrieval (`Provider's accounts list is empty`), and enters an exponential cooldown state (`Prompt dismissed. API exponential cool down`). When the user clicks "Continue with Google", GSI suppresses the click handler due to the active cooldown state.
+
+---
+
+## 2. Identified Root Cause
+
+1. **Google Identity Services (GSI) SDK Detection**: Claude.ai uses Google's modern GSI SDK (`accounts.google.com/gsi/client`).
+2. **User-Agent Embedded Webview Blocking**: By default, QtWebEngine appends `QtWebEngine/6.x.x` to the User-Agent header. Google's GSI library identifies `QtWebEngine` as an embedded WebView and blocks Google One Tap / FedCM sign-in API calls (`Provider's accounts list is empty`).
+3. **GSI Cooldown Suppression**: When GSI fails to initialize FedCM on page load, it sets an internal cooldown timer (`Prompt dismissed. API exponential cool down`). When the user clicks "Continue with Google", the click event is ignored by GSI because of this active cooldown flag.
+
+---
+
+## 3. Recommended Technical Requirements for Hotfix-006
+
+1. **Standard Chrome User-Agent Override**: Configure `QWebEngineProfile` User-Agent to match clean Google Chrome (removing `QtWebEngine/6.x.x` token) so Google GSI SDK does not block authentication.
+2. **Enable Window Activation from JS**: Set `QWebEngineSettings.WebAttribute.AllowWindowActivationFromJavaScript` to `True`.
+3. **Subclass `QWebEnginePage` for `createWindow()` Popup Delegation**: Implement a custom `QWebEnginePage` that handles popups and new window requests cleanly.
+
+---
+
+> [!IMPORTANT]
+> **INVESTIGATION COMPLETE — STOP CONDITION TRIGGERED**
+> 
+> No code changes were implemented during this investigation sprint. Ready to proceed with **Hotfix-006** upon user direction.

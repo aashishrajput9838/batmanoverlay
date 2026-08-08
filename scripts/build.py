@@ -403,7 +403,10 @@ def phase_verify() -> BuildResult:
             p.kill()
             _, stderr = p.communicate()
 
-        if "Booting batmanoverlay application shell" in stderr or "Application shell booted" in stderr:
+        if (
+            "Booting batmanoverlay application shell" in stderr
+            or "Application shell booted" in stderr
+        ):
             print("  [OK] Application shell boot verified cleanly.")
             result.boot_verified = True
         else:
@@ -436,8 +439,14 @@ def phase_promote() -> bool:
         try:
             if item.is_dir():
                 if dest.exists():
-                    safe_rmtree(dest)
-                shutil.copytree(item, dest)
+                    if item.name == "data":
+                        # Preserve existing user session & database data across builds
+                        shutil.copytree(item, dest, dirs_exist_ok=True)
+                    else:
+                        safe_rmtree(dest)
+                        shutil.copytree(item, dest)
+                else:
+                    shutil.copytree(item, dest)
             else:
                 shutil.copy2(item, dest)
         except Exception as e:

@@ -4,6 +4,8 @@ from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QDialog,
+    QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -13,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.models.clipboard import ClipboardItem
+from src.platform.models import TargetInfo
 from src.ui.icons import IconManager
 
 
@@ -100,6 +103,7 @@ class ErrorDialog(QDialog):
             btn_layout.addWidget(btn_copy)
 
         btn_layout.addStretch()
+
         btn_close = QPushButton("Close", self)
         btn_close.clicked.connect(self.accept)
         btn_layout.addWidget(btn_close)
@@ -107,44 +111,8 @@ class ErrorDialog(QDialog):
         layout.addLayout(btn_layout)
 
 
-class RecoveryDialog(QDialog):
-    """Modal dialog presented when a session crash is detected."""
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Session Recovery")
-        self.setFixedWidth(400)
-        self.setModal(True)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(16)
-
-        title_label = QLabel("<b>A previous crash was detected.</b>", self)
-        layout.addWidget(title_label)
-
-        msg_label = QLabel(
-            "Would you like to restore your previous tabs and session state, "
-            "or start with a fresh session?",
-            self,
-        )
-        msg_label.setWordWrap(True)
-        layout.addWidget(msg_label)
-
-        btn_layout = QHBoxLayout()
-        btn_fresh = QPushButton("Start Fresh", self)
-        btn_fresh.clicked.connect(lambda: self.done(0))
-        btn_layout.addWidget(btn_fresh)
-
-        btn_restore = QPushButton("Restore Session", self)
-        btn_restore.clicked.connect(lambda: self.done(1))
-        btn_layout.addWidget(btn_restore)
-
-        layout.addLayout(btn_layout)
-
-
-class ClipboardClearConfirmDialog(QDialog):
-    """Confirmation dialog for clearing clipboard history with pinned items option."""
+class ClearHistoryDialog(QDialog):
+    """Confirmation modal for clearing clipboard repository history."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -184,6 +152,45 @@ class ClipboardClearConfirmDialog(QDialog):
     def keep_pinned(self) -> bool:
         """Return True if keep pinned items checkbox is checked."""
         return self.keep_pinned_cb.isChecked()
+
+
+ClipboardClearConfirmDialog = ClearHistoryDialog
+
+
+class RecoveryDialog(QDialog):
+    """Modal dialog for session recovery options."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Session Recovery")
+        self.setFixedWidth(400)
+        self.setModal(True)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(16)
+
+        msg_label = QLabel(
+            "An unexpected shutdown was detected. "
+            "Would you like to recover your previous session?",
+            self,
+        )
+        msg_label.setWordWrap(True)
+        layout.addWidget(msg_label)
+
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+
+        btn_discard = QPushButton("Discard", self)
+        btn_discard.clicked.connect(self.reject)
+        btn_layout.addWidget(btn_discard)
+
+        btn_recover = QPushButton("Recover Session", self)
+        btn_recover.setDefault(True)
+        btn_recover.clicked.connect(self.accept)
+        btn_layout.addWidget(btn_recover)
+
+        layout.addLayout(btn_layout)
 
 
 class ClipboardPreviewDialog(QDialog):
@@ -233,3 +240,68 @@ class ClipboardPreviewDialog(QDialog):
         btn_layout.addWidget(btn_close)
 
         layout.addLayout(btn_layout)
+
+
+class TargetPreviewDialog(QDialog):
+    """Modal target acquisition preview dialog displayed before typing starts."""
+
+    def __init__(
+        self,
+        target_info: TargetInfo,
+        char_count: int,
+        est_seconds: float,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Typing Target Preview")
+        self.setFixedWidth(440)
+        self.setModal(True)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(14)
+
+        title_label = QLabel("<h3>Target Acquisition Preview</h3>", self)
+        layout.addWidget(title_label)
+
+        form_group = QGroupBox("Target Window & Control Details", self)
+        form_layout = QFormLayout(form_group)
+        form_layout.setContentsMargins(12, 12, 12, 12)
+        form_layout.setSpacing(8)
+
+        form_layout.addRow("Target Window:", QLabel(f"<b>{target_info.window_title}</b>", self))
+        form_layout.addRow(
+            "Target Process:", QLabel(f"<code>{target_info.process_name}</code>", self)
+        )
+        form_layout.addRow(
+            "Target Control:", QLabel(f"<code>{target_info.control_type}</code>", self)
+        )
+        form_layout.addRow("Character Count:", QLabel(f"<b>{char_count:,} characters</b>", self))
+
+        mins = int(est_seconds // 60)
+        secs = int(est_seconds % 60)
+        dur_str = f"{mins}m {secs}s" if mins > 0 else f"{secs}s"
+        form_layout.addRow("Estimated Duration:", QLabel(f"<b>{dur_str}</b>", self))
+
+        layout.addWidget(form_group)
+
+        self.dont_show_cb = QCheckBox("Do not show preview confirmation dialog again", self)
+        layout.addWidget(self.dont_show_cb)
+
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+
+        btn_cancel = QPushButton("Cancel", self)
+        btn_cancel.clicked.connect(self.reject)
+        btn_layout.addWidget(btn_cancel)
+
+        btn_start = QPushButton("Start Typing", self)
+        btn_start.setDefault(True)
+        btn_start.clicked.connect(self.accept)
+        btn_layout.addWidget(btn_start)
+
+        layout.addLayout(btn_layout)
+
+    def dont_show_again(self) -> bool:
+        """Return True if user requested disabling preview mode."""
+        return self.dont_show_cb.isChecked()

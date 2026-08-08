@@ -1,0 +1,55 @@
+# Implementation Plan - HOTFIX-011B — Fix Global Focus Shortcut Using Ctrl+Alt+E
+
+Replace global focus shortcut `Ctrl+E` with `Ctrl + Alt + E` (`MOD_CONTROL | MOD_ALT` + `VK_E`) and fix the Win64 `MSG` ctypes structure alignment so `wParam` reads correctly at offset 16.
+
+## Proposed Changes
+
+### Platform Layer
+
+#### [MODIFY] [global_hotkey.py](file:///c:/github/batmanoverlay.com/src/platform/global_hotkey.py)
+- Correct `MSG` structure field types for Win64 ABI:
+  - `hwnd`: `c_void_p` (8 bytes)
+  - `message`: `c_uint` (4 bytes)
+  - `wParam`: `c_ulonglong` (8 bytes, `UINT_PTR`/`WPARAM`, byte offset 16)
+  - `lParam`: `c_longlong` (8 bytes, `LONG_PTR`/`LPARAM`, byte offset 24)
+- Define `MOD_ALT = 0x0001` and `HOTKEY_ID_CTRL_ALT_E = 0x011C`.
+- Update `WindowsGlobalHotkeyManager` to handle `Ctrl+Alt+E` registration with `MOD_CONTROL | MOD_ALT`.
+
+#### [MODIFY] [__init__.py](file:///c:/github/batmanoverlay.com/src/platform/__init__.py)
+- Export `MOD_ALT` and `HOTKEY_ID_CTRL_ALT_E`.
+
+---
+
+### UI & Main Window Layer
+
+#### [MODIFY] [overlay_visibility_panel.py](file:///c:/github/batmanoverlay.com/src/ui/overlay_visibility_panel.py)
+- Update hint label: `"Shortcuts: Ctrl+Q decrease opacity · Ctrl+W increase opacity · Ctrl+Alt+E focus"`.
+
+#### [MODIFY] [main_window.py](file:///c:/github/batmanoverlay.com/src/ui/main_window.py)
+- Register `Ctrl + Alt + E` (`MOD_CONTROL | MOD_ALT`, `VK_E`, `HOTKEY_ID_CTRL_ALT_E`).
+- In `nativeEvent`, match `msg.message == WM_HOTKEY` and `msg.wParam == HOTKEY_ID_CTRL_ALT_E` using the corrected 64-bit `MSG` structure layout.
+- Call `restore_and_focus()` on `WM_HOTKEY` match, preserving current transparency level and settings intact.
+
+---
+
+### Unit Tests
+
+#### [MODIFY] [test_global_hotkey.py](file:///c:/github/batmanoverlay.com/tests/unit/test_global_hotkey.py)
+- Verify `MSG` structure alignment (`sizeof(MSG) == 48`, `MSG.wParam.offset == 16`).
+- Test `Ctrl+Alt+E` registration, failure handling, `WM_HOTKEY` parsing, `restore_and_focus()` transparency preservation, and unregistration lifecycle.
+
+## Verification Plan
+
+### Automated Tests & Quality Gates
+- Run complete pytest suite & coverage:
+  ```powershell
+  python -m pytest --cov=src
+  ```
+- Run code quality checks:
+  ```powershell
+  python scripts/lint.py
+  ```
+- Run build pipeline:
+  ```powershell
+  python scripts/build.py
+  ```

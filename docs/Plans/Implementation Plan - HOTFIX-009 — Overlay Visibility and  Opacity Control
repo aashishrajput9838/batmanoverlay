@@ -1,0 +1,83 @@
+# Implementation Plan - HOTFIX-009 — Overlay Visibility / Opacity Control
+
+Implement an "Overlay Visibility" control panel at the bottom-center area of the main BatmanOverlay UI (below content area and above status bar) allowing users to adjust window transparency from 0% (fully visible) to 100% (fully transparent).
+
+## User Review Required
+
+> [!IMPORTANT]
+> The transparency percentage value $T$ (0–100) maps strictly to Qt window opacity $O$ (0.0–1.0) via:
+> $$O = 1.0 - (T / 100.0)$$
+> - $T=0\%$   $\rightarrow O=1.0$ (Fully Opaque / Visible)
+> - $T=25\%$  $\rightarrow O=0.75$
+> - $T=50\%$  $\rightarrow O=0.50$
+> - $T=75\%$  $\rightarrow O=0.25$
+> - $T=100\%$ $\rightarrow O=0.0$ (Fully Transparent / Invisible)
+>
+> Settings persistence is integrated into the existing `ConfigManager` via `appearance.overlay_transparency`.
+
+## Proposed Changes
+
+### UI & Window Integration
+
+#### [NEW] [overlay_visibility_panel.py](file:///c:/github/batmanoverlay.com/src/ui/overlay_visibility_panel.py)
+- Create `OverlayVisibilityPanel` widget (inherits `QWidget`).
+- Layout hierarchy:
+  - Header: Title `"Overlay Visibility"`, Subtitle `"Adjust the transparency of the overlay"`, Value Label `"0%"`, Reset Button (`"Reset"`).
+  - Slider row: Left Endpoint `"0% (Fully Visible)"`, `QSlider` (0 to 100, default 0, `StrongFocus` for keyboard accessibility), Right Endpoint `"100% (Fully Transparent)"`.
+- Connect slider `valueChanged` signal to update numeric label and emit `transparency_changed(int)`.
+- Connect reset button to set slider value back to `0`.
+
+#### [MODIFY] [__init__.py](file:///c:/github/batmanoverlay.com/src/ui/__init__.py)
+- Export `OverlayVisibilityPanel`.
+
+#### [MODIFY] [main_window.py](file:///c:/github/batmanoverlay.com/src/ui/main_window.py)
+- Instantiate `OverlayVisibilityPanel` in `MainWindow._setup_ui()` and insert it into `root_layout` below `_content_widget` and above `status_bar`.
+- Connect `overlay_visibility_panel.transparency_changed` to `_on_transparency_changed(transparency: int)`:
+  - Computes $O = 1.0 - (transparency / 100.0)$.
+  - Calls `setWindowOpacity(O)`.
+  - Saves setting `appearance.overlay_transparency` via `ConfigManager`.
+  - Triggers debounced geometry save timer.
+- On geometry/settings restore, sync `OverlayVisibilityPanel` transparency slider value and window opacity.
+- Adjust `set_window_opacity` clamping from `[0.1, 1.0]` to `[0.0, 1.0]` to allow 100% transparency ($O=0.0$).
+
+---
+
+### Data Models & Settings
+
+#### [MODIFY] [settings.py](file:///c:/github/batmanoverlay.com/src/models/settings.py)
+- Add `overlay_transparency: int = Field(default=0, ge=0, le=100)` to `AppearanceSettings`.
+
+#### [MODIFY] [session.py](file:///c:/github/batmanoverlay.com/src/models/session.py)
+- Update `WindowGeometry` field `opacity` bounds from `ge=0.1` to `ge=0.0` so $O=0.0$ validates cleanly.
+
+---
+
+### Automated Unit Tests
+
+#### [NEW] [test_overlay_visibility_panel.py](file:///c:/github/batmanoverlay.com/tests/unit/test_overlay_visibility_panel.py)
+- Test default value is 0.
+- Test slider range 0–100.
+- Test 0% maps to window opacity 1.0.
+- Test 50% maps to window opacity 0.5.
+- Test 100% maps to window opacity 0.0.
+- Test Reset button returns slider value to 0%.
+- Test transparency persistence and restoration with `ConfigManager`.
+
+## Verification Plan
+
+### Automated Tests
+- Run full pytest suite:
+  ```powershell
+  python -m pytest
+  ```
+- Run code quality tools:
+  ```powershell
+  python scripts/lint.py
+  ```
+
+### Build & Executable Verification
+- Execute build script:
+  ```powershell
+  python scripts/build.py
+  ```
+- Launch output executable `dist/batmanoverlay/batmanoverlay.exe` and test all opacity levels (0%, 25%, 50%, 75%, 100%, Reset, and restart persistence).
