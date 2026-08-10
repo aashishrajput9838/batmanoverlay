@@ -7,9 +7,10 @@ import ctypes
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtGui import (
     QCloseEvent,
+    QIcon,
     QKeySequence,
     QMoveEvent,
     QResizeEvent,
@@ -17,10 +18,13 @@ from PySide6.QtGui import (
     QShowEvent,
 )
 from PySide6.QtWidgets import (
+    QApplication,
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMenu,
     QStackedWidget,
+    QSystemTrayIcon,
     QVBoxLayout,
     QWidget,
 )
@@ -46,6 +50,8 @@ from src.platform.global_hotkey import (
     WM_HOTKEY,
     WindowsGlobalHotkeyManager,
 )
+from src.platform.screenshot import CaptureStatus, ScreenshotService
+from src.platform.zorder_manager import ZOrderWatchdogManager
 from src.storage.json_store import JsonStore
 from src.ui.browser_panel import BrowserPanel
 from src.ui.clipboard_panel import ClipboardPanel
@@ -95,6 +101,7 @@ class MainWindow(QMainWindow):
         clipboard_service: IClipboardService | None = None,
         browser_service: IBrowserService | None = None,
         typing_engine: Any | None = None,
+        screenshot_service: ScreenshotService | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -105,6 +112,7 @@ class MainWindow(QMainWindow):
         self._clipboard_service = clipboard_service
         self._browser_service = browser_service
         self._typing_engine = typing_engine
+        self._screenshot_service = screenshot_service
         self._json_store = JsonStore()
         self._geometry_file = data_dir / "sessions" / "geometry.json"
 
@@ -113,6 +121,7 @@ class MainWindow(QMainWindow):
         self._expanded_height = 768
         self._hotkey_manager = WindowsGlobalHotkeyManager()
         self._hotkey_registered = False
+        self._zorder_manager = ZOrderWatchdogManager()
 
         # Setup Debounced Geometry Save Timer
         self._geometry_timer = QTimer(self)
@@ -120,12 +129,19 @@ class MainWindow(QMainWindow):
         self._geometry_timer.setInterval(GEOMETRY_SAVE_DEBOUNCE_MS)
         self._geometry_timer.timeout.connect(self._save_geometry_now)
 
-        # Frameless Window Flags
+        # Frameless Window Flags (Tool window suppresses Windows Taskbar button)
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
-            | Qt.WindowType.Window
+            | Qt.WindowType.Tool
         )
+
+        # App icon — used in Alt+Tab switcher and tray fallback
+        _icon_path = Path(__file__).parent.parent.parent / "resources" / "icons" / "app.png"
+        if _icon_path.exists():
+            from PySide6.QtGui import QPixmap
+
+            self.setWindowIcon(QIcon(QPixmap(str(_icon_path))))
 
         self.setMinimumSize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
         self.resize(1024, 768)
@@ -164,7 +180,11 @@ class MainWindow(QMainWindow):
 
         browser_widget: QWidget
         if self._browser_service:
-            browser_widget = BrowserPanel(self._browser_service, self._signals, self.stack)
+            browser_widget = BrowserPanel(
+                self._browser_service,
+                self._signals,
+                parent=self.stack,
+            )
         else:
             browser_widget = _PlaceholderWidget(PanelName.BROWSER, self.stack)
 
@@ -172,7 +192,11 @@ class MainWindow(QMainWindow):
         if self._typing_engine:
             from src.ui.typing_panel import TypingPanel
 
-            typing_widget = TypingPanel(self._typing_engine, self._signals, self.stack)
+            typing_widget = TypingPanel(
+                self._typing_engine,
+                self._signals,
+                parent=self.stack,
+            )
         else:
             typing_widget = _PlaceholderWidget(PanelName.TYPING, self.stack)
 
@@ -203,12 +227,13 @@ class MainWindow(QMainWindow):
         # 5. Toast Manager Overlay
         self.toast_manager = ToastManager(self)
 
+        # 6. System Tray Icon Setup
+        self._setup_tray_icon()
+
     def _connect_signals(self) -> None:
         # TitleBar signals
         self.title_bar.collapse_toggled.connect(self.set_collapsed)
-        self.title_bar.pin_toggled.connect(self.set_always_on_top)
-        self.title_bar.opacity_changed.connect(self.set_window_opacity)
-        self.title_bar.panel_requested.connect(self.switch_panel)
+        self.title_bar.screenshot_requested.connect(self.take_screenshot)
 
         # Overlay Visibility Panel signals
         self.overlay_visibility_panel.transparency_changed.connect(self._on_transparency_changed)
@@ -229,6 +254,11 @@ class MainWindow(QMainWindow):
         self._shortcut_increase_opacity.setContext(Qt.ShortcutContext.ApplicationShortcut)
         self._shortcut_increase_opacity.activated.connect(self.increase_opacity)
 
+        # Full-Screen Screenshot Shortcut (Ctrl+Shift+S)
+        self._shortcut_screenshot = QShortcut(QKeySequence("Ctrl+Shift+S"), self)
+        self._shortcut_screenshot.setContext(Qt.ShortcutContext.ApplicationShortcut)
+        self._shortcut_screenshot.activated.connect(self.take_screenshot)
+
     def decrease_opacity(self) -> None:
         """Decrease window opacity by 5% step (increase UI transparency, max 99.99%)."""
         current_t = self.overlay_visibility_panel.get_transparency()
@@ -242,6 +272,49 @@ class MainWindow(QMainWindow):
         new_t = round(max(0.0, current_t - 5.0), 2)
         self.overlay_visibility_panel.set_transparency(new_t)
         self._on_transparency_changed(new_t)
+
+    def take_screenshot(self) -> None:
+        """Execute full-screen desktop screenshot with temporary window exclusion."""
+        service = self._screenshot_service or ScreenshotService()
+
+        was_visible = self.isVisible()
+        if was_visible:
+            self.hide()
+            QApplication.processEvents()
+
+        result = service.take_screenshot()
+
+        if was_visible:
+            self.show()
+            self._apply_native_taskbar_suppression()
+            self.activateWindow()
+
+        if result.success and result.file_path:
+            msg = f"Screenshot saved: {result.file_path.name}"
+            self._signals.toast_requested.emit("info", msg)
+            self._signals.status_message.emit(f"Screenshot saved to {result.file_path}")
+        elif result.is_protected_content or result.status == CaptureStatus.PROTECTED_CONTENT:
+            prot_app = result.protected_app_name or "Unknown application"
+            safe_prot_app = prot_app[:40]
+            toast_msg = (
+                f"Screenshot unavailable\n"
+                f"Protected application: {safe_prot_app}\n"
+                f"Windows prevented this application from being captured."
+            )
+            self._signals.toast_requested.emit("warning", toast_msg)
+            self._signals.status_message.emit(f"Protected application: {safe_prot_app}")
+        elif result.status == CaptureStatus.CAPTURE_NOT_REPRESENTATIVE:
+            err_msg = (
+                result.error_message
+                or "Screenshot unavailable: the requested content could not be "
+                "accurately captured by Windows."
+            )
+            self._signals.toast_requested.emit("warning", err_msg)
+            self._signals.status_message.emit("Screenshot unavailable: non-representative frame")
+        else:
+            err_msg = result.error_message or "Screenshot failed."
+            self._signals.toast_requested.emit("warning", err_msg)
+            self._signals.status_message.emit("Screenshot failed")
 
     def _on_transparency_changed(self, transparency_percent: float) -> None:
         """Handle transparency slider changes and apply Qt window opacity."""
@@ -269,18 +342,25 @@ class MainWindow(QMainWindow):
         self._schedule_geometry_save()
 
     def set_always_on_top(self, is_pinned: bool) -> None:
-        """Toggle WindowStaysOnTopHint window flag."""
+        """Toggle WindowStaysOnTopHint window flag and native Z-Order Watchdog."""
         self._is_pinned = is_pinned
-        self.title_bar.set_pinned(is_pinned)
 
-        flags = self.windowFlags()
+        flags = Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool
         if is_pinned:
             flags |= Qt.WindowType.WindowStaysOnTopHint
-        else:
-            flags &= ~Qt.WindowType.WindowStaysOnTopHint
 
         self.setWindowFlags(flags)
         self.show()  # Re-show required after window flags mutation on Windows
+        self._apply_native_taskbar_suppression()
+
+        hwnd = int(self.winId()) if self.winId() else 0
+        if hwnd:
+            self._zorder_manager.set_hwnd(hwnd)
+            if is_pinned:
+                self._zorder_manager.start_watchdog(hwnd)
+            else:
+                self._zorder_manager.stop_watchdog()
+
         self._schedule_geometry_save()
 
     def set_collapsed(self, is_collapsed: bool) -> None:
@@ -319,6 +399,30 @@ class MainWindow(QMainWindow):
             self._hotkey_manager.unregister_hotkey(hwnd, HOTKEY_ID_CTRL_ALT_E)
             self._hotkey_registered = False
 
+    def _apply_native_taskbar_suppression(self) -> None:
+        """Enforce native Win32 HWND extended style (WS_EX_TOOLWINDOW set)."""
+        with contextlib.suppress(Exception):
+            hwnd = int(self.winId()) if self.winId() else 0
+            if hwnd and hasattr(ctypes, "windll"):
+                user32 = getattr(ctypes.windll, "user32", None)
+                if user32:
+                    gwl_exstyle = -20
+                    ws_ex_toolwindow = 0x00000080
+                    ws_ex_appwindow = 0x00040000
+
+                    get_style = getattr(user32, "GetWindowLongPtrW", user32.GetWindowLongW)
+                    set_style = getattr(user32, "SetWindowLongPtrW", user32.SetWindowLongW)
+                    get_style.argtypes = [ctypes.c_void_p, ctypes.c_int]
+                    get_style.restype = ctypes.c_ssize_t
+                    set_style.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_ssize_t]
+                    set_style.restype = ctypes.c_ssize_t
+
+                    hwnd_ptr = ctypes.c_void_p(hwnd)
+                    old_style = get_style(hwnd_ptr, gwl_exstyle)
+                    new_style = (old_style | ws_ex_toolwindow) & ~ws_ex_appwindow
+                    if old_style != new_style:
+                        set_style(hwnd_ptr, gwl_exstyle, new_style)
+
     def restore_and_focus(self) -> None:
         """Restore window from minimized state and force focus without altering transparency."""
         if self.isMinimized():
@@ -328,6 +432,7 @@ class MainWindow(QMainWindow):
             self.set_collapsed(False)
 
         self.show()
+        self._apply_native_taskbar_suppression()
         self.raise_()
         self.activateWindow()
         self.setFocus()
@@ -356,14 +461,70 @@ class MainWindow(QMainWindow):
             return bool(result[0]), int(result[1])
         return False, 0
 
+    def _setup_tray_icon(self) -> None:
+        """Initialize QSystemTrayIcon and context menu for background/minimized execution."""
+        from src.constants import APP_DISPLAY_NAME
+
+        _icon_path = Path(__file__).parent.parent.parent / "resources" / "icons" / "app.png"
+        if _icon_path.exists():
+            from PySide6.QtGui import QPixmap
+
+            tray_qicon = QIcon(QPixmap(str(_icon_path)))
+        else:
+            from src.ui.icons import IconManager
+
+            tray_qicon = IconManager.get_icon("shield")
+
+        self._tray_icon = QSystemTrayIcon(tray_qicon, self)
+        self._tray_icon.setToolTip(APP_DISPLAY_NAME)
+
+        tray_menu = QMenu(self)
+        show_action = tray_menu.addAction("Show BatmanOverlay")
+        show_action.triggered.connect(self.restore_and_focus)
+
+        exit_action = tray_menu.addAction("Exit")
+        exit_action.triggered.connect(self.close)
+
+        self._tray_icon.setContextMenu(tray_menu)
+        self._tray_icon.activated.connect(self._on_tray_icon_activated)
+        self._tray_icon.show()
+
+    def _on_tray_icon_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
+        """Handle system tray icon click and double-click actions."""
+        if reason in (
+            QSystemTrayIcon.ActivationReason.Trigger,
+            QSystemTrayIcon.ActivationReason.DoubleClick,
+        ):
+            self.restore_and_focus()
+
+    def changeEvent(self, event: QEvent) -> None:
+        """Intercept window minimize event to hide MainWindow to system tray."""
+        if event.type() == QEvent.Type.WindowStateChange and self.isMinimized():
+            event.ignore()
+            QTimer.singleShot(0, self._minimize_to_tray)
+            return
+        super().changeEvent(event)
+
+    def _minimize_to_tray(self) -> None:
+        """Hide window to system tray without quitting background process."""
+        self.hide()
+        self.setWindowState(Qt.WindowState.WindowNoState)
+
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
+        self._apply_native_taskbar_suppression()
         if not self._hotkey_registered:
             self._register_global_hotkeys()
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        """Handle real application termination on Close (X) button."""
+        self._zorder_manager.stop_watchdog()
+        self._save_geometry_now()
+        if hasattr(self, "_tray_icon") and self._tray_icon:
+            self._tray_icon.hide()
         self._unregister_global_hotkeys()
         super().closeEvent(event)
+        QApplication.quit()
 
     def moveEvent(self, event: QMoveEvent) -> None:
         super().moveEvent(event)
