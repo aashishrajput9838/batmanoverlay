@@ -1,0 +1,190 @@
+# Implementation Plan: QWebEngine Baseline Migration to `stable-integration`
+
+> **Baseline Reference**: Golden Baseline Commit `1494056562065ceab04cea2475d6b9302dd69241` (Branch: `restore`)  
+> **Target Branch**: `stable-integration` (New branch branched directly from `1494056`)  
+> **Primary Directive**: Preserve the verified, in-process **`QWebEngineView`** browser engine and native Google/ChatGPT authentication flow while selectively porting independent features added after `1494056`.
+
+---
+
+## User Review Required
+
+> [!IMPORTANT]
+> **Zero CDP / External Chrome Compromise**: The working `QWebEngineView` browser stack is the highest-priority constraint. All Chrome DevTools Protocol (CDP) modules (`chrome_process.py`, `cdp_client.py`, screencast JPEG renderers, `--remote-debugging-port=9222`, and `AutomationControlled` flags) will be **EXCLUDED** from this migration.
+
+> [!NOTE]
+> The isolated/private clipboard experiment (`src/platform/private_clipboard.py`) was deleted in `main` (`e7df7cc`). The baseline `restore` clipboard architecture (`ClipboardMonitor` + SQLite repository) will remain intact.
+
+---
+
+## Architecture Comparison Summary
+
+```
+                      GOLDEN BASELINE (restore / 1494056)
+                      - Embedded QWebEngineView (In-Process)
+                      - Native Google & ChatGPT Auth Working
+                                    │
+                                    │  Selective Porting of Independent Subsystems
+                                    ▼
+                     NEW BRANCH: stable-integration
+   ┌────────────────────────────────┬────────────────────────────────┐
+   │ Included Independent Subsystems│  Excluded CDP / Broken Subsystems │
+   ├────────────────────────────────┼────────────────────────────────┤
+   │ • DXGI Screen Capture Engine   │ • External chrome.exe spawner  │
+   │ • C++ MSVC Z-Order Watchdog    │ • CDP WebSocket Client         │
+   │ • DPAPI Credential Store       │ • CDP Screencast JPEG Renderer │
+   │ • Tray & Opacity Controls      │ • Native Chrome Handoff        │
+   │ • Documentation & README       │ • AutomationControlled flags   │
+   └────────────────────────────────┴────────────────────────────────┘
+```
+
+---
+
+## Proposed Changes
+
+### Component 1: Core Browser & App Entry (UNTOUCHED BASELINE)
+
+Keep the exact in-process `QWebEngineView` implementation from commit `1494056`.
+
+#### [UNTOUCHED] [src/main.py](file:///c:/github/batmanoverlay.com/src/main.py)
+- Retain baseline entry point. Do NOT add `QTWEBENGINE_CHROMIUM_FLAGS="--disable-blink-features=AutomationControlled"`.
+
+#### [UNTOUCHED] [src/app.py](file:///c:/github/batmanoverlay.com/src/app.py)
+- Retain baseline `BatmanOverlayApp` lifecycle and container.
+
+#### [UNTOUCHED] [src/browser/service.py](file:///c:/github/batmanoverlay.com/src/browser/service.py)
+- Retain baseline `BrowserService`.
+
+#### [UNTOUCHED] [src/browser/profile_manager.py](file:///c:/github/batmanoverlay.com/src/browser/profile_manager.py)
+- Retain baseline `BrowserProfileManager` managing `./data/browser/profiles/default/Cookies` with `ForcePersistentCookies`.
+
+#### [UNTOUCHED] [src/ui/browser_panel.py](file:///c:/github/batmanoverlay.com/src/ui/browser_panel.py)
+- Retain baseline `QWebEngineView` panel rendering page natively.
+
+---
+
+### Component 2: Screen Capture Subsystem (NEW PORT)
+
+Port the DirectX DXGI Desktop Duplication capture engine developed after `1494056`.
+
+#### [NEW] [src/platform/screenshot/dxgi_desktop_duplication.py](file:///c:/github/batmanoverlay.com/src/platform/screenshot/dxgi_desktop_duplication.py)
+- GPU-accelerated DirectX desktop duplication API capture backend.
+
+#### [NEW] [src/platform/screenshot/screenshot_service.py](file:///c:/github/batmanoverlay.com/src/platform/screenshot/screenshot_service.py)
+- Multi-backend screen capture orchestrator.
+
+#### [NEW] [src/platform/screenshot/window_detector.py](file:///c:/github/batmanoverlay.com/src/platform/screenshot/window_detector.py)
+- Window geometry detection and application-aware screenshot filenames.
+
+#### [NEW] [src/platform/screenshot/frame_analyzer.py](file:///c:/github/batmanoverlay.com/src/platform/screenshot/frame_analyzer.py)
+- Pixel delta and color classifier frame analyzer.
+
+#### [NEW] [src/platform/screenshot/windows_capture.py](file:///c:/github/batmanoverlay.com/src/platform/screenshot/windows_capture.py) & [windows_graphics_capture.py](file:///c:/github/batmanoverlay.com/src/platform/screenshot/windows_graphics_capture.py)
+- BitBlt virtual screen metrics and Windows Graphics Capture backends.
+
+---
+
+### Component 3: Native Win32 Z-Order Watchdog (NEW PORT)
+
+Port the native C++ MSVC extension DLL and Python z-order manager.
+
+#### [NEW] [src/platform/native/batmanoverlay_zorder.cpp](file:///c:/github/batmanoverlay.com/src/platform/native/batmanoverlay_zorder.cpp)
+- MSVC C++ extension DLL for native Z-order pinning (`TopMost`, `Desktop Pin`, opacity, click-through).
+
+#### [NEW] [src/platform/zorder_manager.py](file:///c:/github/batmanoverlay.com/src/platform/zorder_manager.py)
+- PyWin32 and native DLL z-order manager facade.
+
+#### [NEW] [scripts/build_zorder_dll.py](file:///c:/github/batmanoverlay.com/scripts/build_zorder_dll.py)
+- Build script for compiling `batmanoverlay_zorder.cpp` into `batmanoverlay_zorder.dll`.
+
+---
+
+### Component 4: Data Persistence & Storage (NEW PORT)
+
+#### [NEW] [src/storage/credential_store.py](file:///c:/github/batmanoverlay.com/src/storage/credential_store.py)
+- DPAPI encrypted key-value secret store for local credentials.
+
+---
+
+### Component 5: UI & System Tray Enhancements (SELECTIVE PORT)
+
+#### [MODIFY] [src/ui/main_window.py](file:///c:/github/batmanoverlay.com/src/ui/main_window.py)
+- Port tray icon activation, minimize-to-tray lifecycle, opacity slider mapping (99.99%), and Z-order manager integration.
+- Exclude all CDP event bindings.
+
+#### [MODIFY] [src/core/notification_manager.py](file:///c:/github/batmanoverlay.com/src/core/notification_manager.py)
+- Add toast notifications for protected capture alerts.
+
+---
+
+### Component 6: Documentation & Indexes (NEW PORT)
+
+#### [NEW] [INDEX.md](file:///c:/github/batmanoverlay.com/INDEX.md) & [docs/INDEX.md](file:///c:/github/batmanoverlay.com/docs/INDEX.md)
+- Complete codebase architectural navigation guides.
+
+#### [MODIFY] [README.md](file:///c:/github/batmanoverlay.com/README.md)
+- Updated README with badges, tech specs table, and build/test guides.
+
+---
+
+### Excluded CDP / Broken Components (DO NOT PORT)
+
+- `[EXCLUDED]` `src/browser/cdp/chrome_process.py`
+- `[EXCLUDED]` `src/browser/cdp/cdp_client.py`
+- `[EXCLUDED]` `src/browser/cdp/cdp_browser_widget.py`
+- `[EXCLUDED]` `src/browser/cdp/cdp_renderer.py`
+- `[EXCLUDED]` `src/browser/cdp/cdp_input.py`
+- `[EXCLUDED]` `src/browser/cdp/cdp_page.py`
+- `[EXCLUDED]` `src/browser/cdp/auth_handoff_manager.py`
+- `[EXCLUDED]` `src/browser/cdp/async_loop.py`
+- `[EXCLUDED]` `scripts/cdp_poc.py`
+
+---
+
+## Migration Execution Order
+
+```
+Step 1: Create Branch stable-integration from restore (1494056)
+   │
+Step 2: Port Screen Capture Subsystem (src/platform/screenshot/)
+   │  └─ Manual Checkpoint 1: Run pytest tests/unit/test_screenshot_service.py
+   │
+Step 3: Port Native Z-Order Watchdog (src/platform/native/ & zorder_manager.py)
+   │  └─ Manual Checkpoint 2: Build DLL & verify window pin modes
+   │
+Step 4: Port DPAPI Credential Store (src/storage/credential_store.py)
+   │  └─ Manual Checkpoint 3: Run unit tests for credential store
+   │
+Step 5: Port UI Tray & Opacity Enhancements (main_window.py & title_bar.py)
+   │  └─ Manual Checkpoint 4: Launch GUI and verify tray & transparency
+   │
+Step 6: Port Documentation & Repository Indexes (INDEX.md, README.md)
+   │  └─ Manual Checkpoint 5: Verify links and docs
+   │
+Step 7: Final End-to-End Authentication & Regression Suite Pass
+```
+
+---
+
+## Verification & Manual Test Plan
+
+### Checkpoint Verification Matrix
+
+| Checkpoint | Target Feature | Automated Test Command | Manual Verification |
+| :--- | :--- | :--- | :--- |
+| **Checkpoint 1** | Screen Capture | `pytest tests/unit/test_screenshot_service.py` | Verify screenshot capture on desktop |
+| **Checkpoint 2** | Z-Order Watchdog | `python scripts/build_zorder_dll.py` | Test TopMost & Desktop Pin toggles |
+| **Checkpoint 3** | DPAPI Store | `pytest tests/unit/test_models.py` | Verify DPAPI encryption/decryption |
+| **Checkpoint 4** | UI Opacity & Tray | `pytest tests/unit/test_overlay_visibility_panel.py` | Verify minimize-to-tray and opacity slider |
+| **Checkpoint 5** | All Unit Tests | `pytest -m unit` | Ensure all 198+ unit tests pass |
+
+### Final Authentication Test Matrix
+
+| Test Case | Procedure | Expected Result | Pass/Fail Criteria |
+| :--- | :--- | :--- | :---: |
+| **1. Google Homepage** | Navigate to `https://google.com` | Renders cleanly in `QWebEngineView` | ✅ PASS |
+| **2. Google Sign-In** | Click "Sign In" and enter credentials | Successfully authenticates without security warning | ✅ PASS |
+| **3. Google Persistence** | Close app, relaunch `batmanoverlay` | User remains signed in to Google | ✅ PASS |
+| **4. ChatGPT Login** | Navigate to `https://chatgpt.com` and log in | Cloudflare & login succeed cleanly | ✅ PASS |
+| **5. ChatGPT Persistence**| Close app, relaunch `batmanoverlay` | Active ChatGPT session persists | ✅ PASS |
+| **6. Browser Restart** | Open new tab, navigate, close tab | Browser profile retains history & cookies | ✅ PASS |
+| **7. Application Restart**| Reboot app via system tray / CLI | Clean boot without error modals | ✅ PASS |
