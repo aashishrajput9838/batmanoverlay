@@ -302,6 +302,13 @@ class TypingPanel(QWidget):
         mistake_layout.addWidget(self._spin_mistake)
         form_config.addRow("Typo Rate:", mistake_layout)
 
+        # Humanized Word Rhythm Mode (2 chars fast -> 0.5s pause -> rest of word -> 1s word pause)
+        self._chk_humanized_rhythm = QCheckBox(
+            "Humanized Rhythm (0.5s mid-word + 1.0s word pause)", grp_config
+        )
+        self._chk_humanized_rhythm.setChecked(True)
+        form_config.addRow(self._chk_humanized_rhythm)
+
         # Preview Confirmation Mode (Optional — OFF by default)
         self._chk_preview = QCheckBox("Show preview before typing", grp_config)
         self._chk_preview.setChecked(False)
@@ -330,6 +337,7 @@ class TypingPanel(QWidget):
         """Connect Qt signals from controls and HumanTypingEngine backend."""
         # Control signals
         self._combo_delay.currentIndexChanged.connect(self._on_config_changed)
+        self._chk_humanized_rhythm.toggled.connect(self._on_config_changed)
         self._chk_preview.toggled.connect(self._on_config_changed)
         self._chk_enable_paste.toggled.connect(self._spin_paste.setEnabled)
         self._chk_enable_paste.toggled.connect(self._on_config_changed)
@@ -382,6 +390,7 @@ class TypingPanel(QWidget):
         self._chk_enable_paste.setChecked(cfg.enable_paste_threshold)
         self._spin_paste.setEnabled(cfg.enable_paste_threshold)
         self._spin_paste.setValue(cfg.paste_threshold_chars)
+        self._chk_humanized_rhythm.setChecked(cfg.humanized_rhythm_enabled)
 
     def _get_current_config(self) -> TypingConfig:
         val = self._combo_delay.currentData()
@@ -393,6 +402,10 @@ class TypingPanel(QWidget):
             mistake_probability=float(self._spin_mistake.value()) / 100.0,
             enable_paste_threshold=self._chk_enable_paste.isChecked(),
             paste_threshold_chars=self._spin_paste.value(),
+            humanized_rhythm_enabled=self._chk_humanized_rhythm.isChecked(),
+            mid_word_pause_ms=500.0,
+            word_pause_ms=1000.0,
+            fast_char_delay_ms=25.0,
         )
 
     def _on_config_changed(self) -> None:

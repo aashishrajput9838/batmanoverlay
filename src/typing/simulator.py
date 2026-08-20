@@ -81,6 +81,10 @@ class HumanTypingSimulator:
             else random.Random()
         )
         graphemes = parse_grapheme_clusters(text)
+
+        if config.humanized_rhythm_enabled:
+            return self._generate_humanized_rhythm_plan(graphemes, config, rng)
+
         steps: list[TypingStep] = []
 
         # Calculate base timing from WPM (Standard word = 5 characters)
@@ -138,6 +142,167 @@ class HumanTypingSimulator:
                 )
 
             prev_char = g
+
+        return steps
+
+    @staticmethod
+    def _is_word_separator(g: str) -> bool:
+        if not g or g.isspace() or g in ("\n", "\r", "\t"):
+            return True
+        punct = (
+            ".",
+            ",",
+            "!",
+            "?",
+            ";",
+            ":",
+            "-",
+            "—",
+            "(",
+            ")",
+            "[",
+            "]",
+            "{",
+            "}",
+            '"',
+            "'",
+            "/",
+            "\\",
+            "@",
+            "#",
+            "$",
+            "%",
+            "^",
+            "&",
+            "*",
+            "+",
+            "=",
+            "<",
+            ">",
+            "|",
+            "`",
+            "~",
+        )
+        return g in punct
+
+    def _generate_humanized_rhythm_plan(
+        self,
+        graphemes: list[str],
+        config: TypingConfig,
+        rng: random.Random,
+    ) -> list[TypingStep]:
+        """Generate plan with 2-char burst -> 0.5s mid-word pause -> 1.0s word pause."""
+        steps: list[TypingStep] = []
+        n = len(graphemes)
+        char_in_word = 0
+
+        # Scale pauses proportionally with speed WPM (60 WPM baseline)
+        wpm_scale = 60.0 / max(1.0, config.speed_wpm)
+        mid_word_pause = config.mid_word_pause_ms * wpm_scale
+        word_pause = config.word_pause_ms * wpm_scale
+        fast_delay = max(config.min_delay_ms, config.fast_char_delay_ms * wpm_scale)
+
+        for i, g in enumerate(graphemes):
+            is_sep = self._is_word_separator(g)
+
+            if not is_sep:
+                char_in_word += 1
+                delay = fast_delay
+                if config.typing_jitter > 0:
+                    jitter = rng.gauss(0, fast_delay * 0.15)
+                    delay = max(config.min_delay_ms, min(config.max_delay_ms, delay + jitter))
+
+                # Check if typo should be simulated
+                if (
+                    i > 0
+                    and len(g) == 1
+                    and g.isalnum()
+                    and rng.random() < config.mistake_probability
+                ):
+                    typo_char = self._get_proximity_typo(g, rng)
+                    steps.append(
+                        TypingStep(
+                            char=typo_char,
+                            action_type=TypingAction.TYPE_CHAR,
+                            delay_ms=delay,
+                        )
+                    )
+                    steps.append(
+                        TypingStep(
+                            char="",
+                            action_type=TypingAction.PAUSE,
+                            delay_ms=config.correction_delay_ms * wpm_scale,
+                        )
+                    )
+                    steps.append(
+                        TypingStep(
+                            char="",
+                            action_type=TypingAction.BACKSPACE,
+                            delay_ms=config.min_delay_ms * 1.5,
+                        )
+                    )
+                    steps.append(
+                        TypingStep(
+                            char=g,
+                            action_type=TypingAction.TYPE_CHAR,
+                            delay_ms=config.min_delay_ms * 2.0,
+                        )
+                    )
+                else:
+                    steps.append(
+                        TypingStep(
+                            char=g,
+                            action_type=TypingAction.TYPE_CHAR,
+                            delay_ms=delay,
+                        )
+                    )
+
+                # Rule 2: After typing 2nd char of a word, take mid-word pause if word continues
+                if char_in_word == 2 and mid_word_pause > 0:
+                    next_is_word_char = (i + 1 < n) and (
+                        not self._is_word_separator(graphemes[i + 1])
+                    )
+                    if next_is_word_char:
+                        steps.append(
+                            TypingStep(
+                                char="",
+                                action_type=TypingAction.PAUSE,
+                                delay_ms=mid_word_pause,
+                            )
+                        )
+            else:
+                delay = fast_delay
+                if config.typing_jitter > 0:
+                    jitter = rng.gauss(0, fast_delay * 0.15)
+                    delay = max(config.min_delay_ms, min(config.max_delay_ms, delay + jitter))
+
+                steps.append(
+                    TypingStep(
+                        char=g,
+                        action_type=TypingAction.TYPE_CHAR,
+                        delay_ms=delay,
+                    )
+                )
+
+                # Rule 1: After completing a word, take word pause
+                if char_in_word > 0 and word_pause > 0:
+                    steps.append(
+                        TypingStep(
+                            char="",
+                            action_type=TypingAction.PAUSE,
+                            delay_ms=word_pause,
+                        )
+                    )
+                    char_in_word = 0
+
+        if char_in_word > 0 and word_pause > 0:
+            steps.append(
+                TypingStep(
+                    char="",
+                    action_type=TypingAction.PAUSE,
+                    delay_ms=word_pause,
+                )
+            )
 
         return steps
 

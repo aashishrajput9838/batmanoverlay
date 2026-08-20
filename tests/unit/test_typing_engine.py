@@ -41,7 +41,7 @@ def test_typing_config_defaults_and_estimation() -> None:
 @pytest.mark.unit
 def test_typing_config_high_speed_wpm_limit() -> None:
     """Verify TypingConfig accepts speeds up to 2000 WPM without internal clamping or errors."""
-    config_2000 = TypingConfig(speed_wpm=2000.0)
+    config_2000 = TypingConfig(speed_wpm=2000.0, humanized_rhythm_enabled=False)
     assert config_2000.speed_wpm == 2000.0
 
     # Test duration estimation at 2000 WPM
@@ -113,7 +113,10 @@ def test_simulator_paste_threshold_fallback() -> None:
 
     # Test disabled enable_paste_threshold (forces character-by-character typing)
     config_disabled = TypingConfig(
-        paste_threshold_chars=50, enable_paste_threshold=False, mistake_probability=0.0
+        paste_threshold_chars=50,
+        enable_paste_threshold=False,
+        mistake_probability=0.0,
+        humanized_rhythm_enabled=False,
     )
     plan_disabled = simulator.generate_plan(large_text, config_disabled)
     assert len(plan_disabled) == 100
@@ -299,6 +302,7 @@ def test_typing_worker_preview_confirmation_flow() -> None:
         start_delay_seconds=0.05,
         show_preview_dialog=True,  # Enable preview wait
         speed_wpm=300.0,
+        humanized_rhythm_enabled=False,
     )
 
     job = TypingJob(text="Preview Flow Text", config=config)
@@ -603,3 +607,28 @@ def test_windows_key_input_sender_utf16_surrogate_pairs() -> None:
                     assert 0 <= scan <= 0xFFFF, f"wScan {hex(scan)} out of 16-bit WORD bounds!"
         finally:
             sender._user32.SendInput = original_send_input
+
+
+@pytest.mark.unit
+def test_humanized_rhythm_plan_generation() -> None:
+    """Verify Rule 1 (1s word pause) and Rule 2 (2 chars -> 0.5s pause -> rest of word)."""
+    simulator = HumanTypingSimulator()
+    config = TypingConfig(
+        humanized_rhythm_enabled=True,
+        mid_word_pause_ms=500.0,
+        word_pause_ms=1000.0,
+        fast_char_delay_ms=25.0,
+        mistake_probability=0.0,
+    )
+
+    plan = simulator.generate_plan("Batman Overlay", config)
+
+    pauses = [s.delay_ms for s in plan if s.action_type == TypingAction.PAUSE]
+    assert 500.0 in pauses
+    assert 1000.0 in pauses
+
+    first_500_idx = next(i for i, s in enumerate(plan) if s.delay_ms == 500.0)
+    typed_before_first_pause = [
+        s.char for s in plan[:first_500_idx] if s.action_type == TypingAction.TYPE_CHAR
+    ]
+    assert typed_before_first_pause == ["B", "a"]

@@ -97,6 +97,7 @@ def test_typing_panel_start_and_complete_flow() -> None:
 
     panel._combo_delay.setCurrentIndex(0)
     panel._chk_preview.setChecked(False)
+    panel._chk_humanized_rhythm.setChecked(False)
     panel._spin_wpm.setValue(300)
 
     panel._txt_input.setPlainText("Fast Text")
