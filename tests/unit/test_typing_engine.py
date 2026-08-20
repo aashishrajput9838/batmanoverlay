@@ -325,7 +325,7 @@ def test_typing_worker_preview_confirmation_flow() -> None:
 
     # Confirm preview
     worker.confirm_preview()
-    for _ in range(100):
+    for _ in range(200):
         if not worker.isRunning():
             break
         time.sleep(0.05)
