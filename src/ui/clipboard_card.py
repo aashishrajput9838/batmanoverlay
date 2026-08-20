@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -66,6 +66,12 @@ class ClipboardItemCard(QWidget):
 
         self._setup_ui()
 
+    def sizeHint(self) -> QSize:
+        hint = super().sizeHint()
+        if self.item.content_type == ClipboardItemType.IMAGE:
+            return QSize(hint.width(), max(hint.height(), 220))
+        return hint
+
     def _setup_ui(self) -> None:
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(14, 12, 14, 12)
@@ -120,9 +126,26 @@ class ClipboardItemCard(QWidget):
 
         self.text_label = QLabel(display_text, self)
         self.text_label.setWordWrap(True)
-        self.text_label.setMaximumHeight(64)
-        self.text_label.setStyleSheet("color: #CDD6F4; font-size: 13px;")
+        self.text_label.setMaximumHeight(36)
+        self.text_label.setStyleSheet("color: #CDD6F4; font-size: 12px; font-weight: bold;")
         main_layout.addWidget(self.text_label)
+
+        # Image Thumbnail Preview Widget
+        if self.item.content_type == ClipboardItemType.IMAGE:
+            p = Path(self.item.content)
+            if p.exists():
+                pix = QPixmap(str(p))
+                if not pix.isNull():
+                    scaled_pix = pix.scaled(
+                        280, 130, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+                    )
+                    self.img_label = QLabel(self)
+                    self.img_label.setPixmap(scaled_pix)
+                    self.img_label.setStyleSheet(
+                        "border: 1px solid #313244; border-radius: 6px; background-color: #11111b; padding: 4px;"
+                    )
+                    self.img_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                    main_layout.addWidget(self.img_label)
 
         # Meta & Action Controls Row
         meta_row = QHBoxLayout()

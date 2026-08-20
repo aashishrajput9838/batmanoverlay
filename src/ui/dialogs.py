@@ -1,7 +1,9 @@
 """Reusable modal dialogs for batmanoverlay."""
 
+from pathlib import Path
+
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QKeyEvent, QScreen
+from PySide6.QtGui import QKeyEvent, QPixmap, QScreen
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -18,7 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from src.models.clipboard import ClipboardItem
+from src.models.clipboard import ClipboardItem, ClipboardItemType
 from src.platform.models import TargetInfo
 from src.ui.icons import IconManager
 
@@ -198,7 +200,7 @@ class RecoveryDialog(QDialog):
 
 
 class ClipboardPreviewDialog(QDialog):
-    """Modal dialog displaying full un-truncated text and metadata for a clipboard item."""
+    """Modal dialog displaying full un-truncated text/image preview and metadata for a clipboard item."""
 
     def __init__(self, item: ClipboardItem, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -211,20 +213,40 @@ class ClipboardPreviewDialog(QDialog):
         layout.setSpacing(12)
 
         # Meta summary line
-        meta_str = (
-            f"Type: <b>{item.content_type.value.upper()}</b> | "
-            f"Chars: <b>{item.char_count}</b> | "
-            f"Words: <b>{item.word_count}</b> | "
-            f"Lines: <b>{item.line_count}</b>"
-        )
+        if item.content_type == ClipboardItemType.IMAGE:
+            meta_str = f"Type: <b>IMAGE SCREENSHOT</b> | Path: <code>{item.content}</code>"
+        else:
+            meta_str = (
+                f"Type: <b>{item.content_type.value.upper()}</b> | "
+                f"Chars: <b>{item.char_count}</b> | "
+                f"Words: <b>{item.word_count}</b> | "
+                f"Lines: <b>{item.line_count}</b>"
+            )
         meta_label = QLabel(meta_str, self)
         layout.addWidget(meta_label)
 
-        # Text display area
-        text_box = QTextEdit(self)
-        text_box.setReadOnly(True)
-        text_box.setPlainText(item.content)
-        layout.addWidget(text_box, stretch=1)
+        # Content display area (Image preview or text box)
+        if item.content_type == ClipboardItemType.IMAGE and Path(item.content).exists():
+            pix = QPixmap(item.content)
+            if not pix.isNull():
+                img_label = QLabel(self)
+                scaled_pix = pix.scaled(
+                    500, 320, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+                )
+                img_label.setPixmap(scaled_pix)
+                img_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                img_label.setStyleSheet("background: #11111b; border: 1px solid #313244; border-radius: 8px; padding: 8px;")
+                layout.addWidget(img_label, stretch=1)
+            else:
+                text_box = QTextEdit(self)
+                text_box.setReadOnly(True)
+                text_box.setPlainText(item.content)
+                layout.addWidget(text_box, stretch=1)
+        else:
+            text_box = QTextEdit(self)
+            text_box.setReadOnly(True)
+            text_box.setPlainText(item.content)
+            layout.addWidget(text_box, stretch=1)
 
         # Bottom info & action bar
         info_label = QLabel(
@@ -233,8 +255,17 @@ class ClipboardPreviewDialog(QDialog):
         layout.addWidget(info_label)
 
         btn_layout = QHBoxLayout()
+
+        def _copy_item() -> None:
+            if item.content_type == ClipboardItemType.IMAGE and Path(item.content).exists():
+                pix_copy = QPixmap(item.content)
+                if not pix_copy.isNull():
+                    QApplication.clipboard().setImage(pix_copy.toImage())
+                    return
+            QApplication.clipboard().setText(item.content)
+
         btn_copy = QPushButton("Copy to Clipboard", self)
-        btn_copy.clicked.connect(lambda: QApplication.clipboard().setText(item.content))
+        btn_copy.clicked.connect(_copy_item)
         btn_layout.addWidget(btn_copy)
 
         btn_layout.addStretch()

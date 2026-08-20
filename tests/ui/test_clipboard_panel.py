@@ -106,3 +106,30 @@ def test_clipboard_card_and_dialog_instantiation(
     confirm_dlg = ClipboardClearConfirmDialog()
     qtbot.addWidget(confirm_dlg)
     assert confirm_dlg.keep_pinned() is True
+
+
+@pytest.mark.ui
+def test_image_clipboard_card_and_dialog_instantiation(
+    qtbot: pytest.PyTest, clipboard_service: ClipboardService, tmp_path: Path
+) -> None:
+    from PySide6.QtGui import QImage, QPixmap
+
+    # Create dummy screenshot file
+    img_file = tmp_path / "test_screenshot.png"
+    img = QImage(100, 100, QImage.Format.Format_RGB32)
+    img.fill(0xFF0000)
+    img.save(str(img_file), "PNG")
+
+    from src.models.clipboard import ClipboardItemType
+
+    item = clipboard_service.add_item(str(img_file), content_type=ClipboardItemType.IMAGE)
+    assert item is not None
+
+    card = ClipboardItemCard(item)
+    qtbot.addWidget(card)
+    assert hasattr(card, "img_label")
+    assert card.sizeHint().height() >= 220
+
+    dlg = ClipboardPreviewDialog(item)
+    qtbot.addWidget(dlg)
+    assert dlg.windowTitle() == "Clipboard Item Detail"
