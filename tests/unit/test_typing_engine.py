@@ -325,8 +325,11 @@ def test_typing_worker_preview_confirmation_flow() -> None:
 
     # Confirm preview
     worker.confirm_preview()
-    worker.wait(3000)
-    QCoreApplication.processEvents()
+    for _ in range(100):
+        if not worker.isRunning():
+            break
+        time.sleep(0.05)
+        QCoreApplication.processEvents()
 
     assert worker.job.status == JobStatus.COMPLETED
 
@@ -539,8 +542,11 @@ def test_engine_preview_confirm_and_cancel() -> None:
 
     assert engine.confirm_preview() is True
     if engine._scheduler._active_worker:
-        engine._scheduler._active_worker.wait(3000)
-    QCoreApplication.processEvents()
+        for _ in range(100):
+            if not engine._scheduler._active_worker.isRunning():
+                break
+            time.sleep(0.05)
+            QCoreApplication.processEvents()
 
     # Test cancel preview facade call
     _job2 = engine.type_text("Cancel preview text", config)
@@ -549,8 +555,11 @@ def test_engine_preview_confirm_and_cancel() -> None:
 
     assert engine.cancel_preview() is True
     if engine._scheduler._active_worker:
-        engine._scheduler._active_worker.wait(3000)
-    QCoreApplication.processEvents()
+        for _ in range(100):
+            if not engine._scheduler._active_worker.isRunning():
+                break
+            time.sleep(0.05)
+            QCoreApplication.processEvents()
 
     # Test set_default_config & clear_queue facade calls
     engine.set_default_config(TypingConfig(speed_wpm=90.0))
