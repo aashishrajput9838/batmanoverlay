@@ -50,9 +50,9 @@ class TypingConfig(BaseModel):
         float, Field(ge=0.0, le=0.5, description="Probability (0.0 to 0.5) of making a typo.")
     ] = 0.03
     correction_delay_ms: float = Field(
-        default=150.0,
+        default=2000.0,
         ge=0.0,
-        le=3000.0,
+        le=10000.0,
         description="Pause in milliseconds before backspacing to fix a typo.",
     )
     typing_jitter: float = Field(

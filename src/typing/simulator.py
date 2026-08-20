@@ -231,7 +231,7 @@ class HumanTypingSimulator:
                         TypingStep(
                             char="",
                             action_type=TypingAction.PAUSE,
-                            delay_ms=config.correction_delay_ms * wpm_scale,
+                            delay_ms=config.correction_delay_ms,
                         )
                     )
                     steps.append(

@@ -7,6 +7,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDoubleSpinBox,
     QFormLayout,
     QFrame,
     QGroupBox,
@@ -259,11 +260,11 @@ class TypingPanel(QWidget):
         # Speed WPM
         wpm_layout = QHBoxLayout()
         self._spin_wpm = QSpinBox(grp_config)
-        self._spin_wpm.setRange(20, 2000)
+        self._spin_wpm.setRange(5, 2000)
         self._spin_wpm.setValue(60)
 
         self._slider_wpm = QSlider(Qt.Orientation.Horizontal, grp_config)
-        self._slider_wpm.setRange(20, 2000)
+        self._slider_wpm.setRange(5, 2000)
         self._slider_wpm.setValue(60)
 
         self._spin_wpm.valueChanged.connect(self._on_spin_wpm_changed)
@@ -302,6 +303,14 @@ class TypingPanel(QWidget):
         mistake_layout.addWidget(self._spin_mistake)
         form_config.addRow("Typo Rate:", mistake_layout)
 
+        # Backspace Delay before correcting a typo (Default 2.0s)
+        self._spin_correction_delay = QDoubleSpinBox(grp_config)
+        self._spin_correction_delay.setRange(0.0, 10.0)
+        self._spin_correction_delay.setSingleStep(0.5)
+        self._spin_correction_delay.setValue(2.0)
+        self._spin_correction_delay.setSuffix(" s")
+        form_config.addRow("Backspace Delay:", self._spin_correction_delay)
+
         # Humanized Word Rhythm Mode (2 chars fast -> 0.5s pause -> rest of word -> 1s word pause)
         self._chk_humanized_rhythm = QCheckBox(
             "Humanized Rhythm (0.5s mid-word + 1.0s word pause)", grp_config
@@ -337,6 +346,7 @@ class TypingPanel(QWidget):
         """Connect Qt signals from controls and HumanTypingEngine backend."""
         # Control signals
         self._combo_delay.currentIndexChanged.connect(self._on_config_changed)
+        self._spin_correction_delay.valueChanged.connect(self._on_config_changed)
         self._chk_humanized_rhythm.toggled.connect(self._on_config_changed)
         self._chk_preview.toggled.connect(self._on_config_changed)
         self._chk_enable_paste.toggled.connect(self._spin_paste.setEnabled)
@@ -387,6 +397,7 @@ class TypingPanel(QWidget):
         self._spin_wpm.setValue(int(cfg.speed_wpm))
         self._chk_preview.setChecked(cfg.show_preview_dialog)
         self._spin_mistake.setValue(round(cfg.mistake_probability * 100))
+        self._spin_correction_delay.setValue(cfg.correction_delay_ms / 1000.0)
         self._chk_enable_paste.setChecked(cfg.enable_paste_threshold)
         self._spin_paste.setEnabled(cfg.enable_paste_threshold)
         self._spin_paste.setValue(cfg.paste_threshold_chars)
@@ -400,6 +411,7 @@ class TypingPanel(QWidget):
             start_delay_seconds=delay_seconds,
             show_preview_dialog=self._chk_preview.isChecked(),
             mistake_probability=float(self._spin_mistake.value()) / 100.0,
+            correction_delay_ms=self._spin_correction_delay.value() * 1000.0,
             enable_paste_threshold=self._chk_enable_paste.isChecked(),
             paste_threshold_chars=self._spin_paste.value(),
             humanized_rhythm_enabled=self._chk_humanized_rhythm.isChecked(),

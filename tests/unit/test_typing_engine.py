@@ -46,10 +46,10 @@ def test_typing_config_high_speed_wpm_limit() -> None:
 
     # Test duration estimation at 2000 WPM
     est = config_2000.calculate_estimated_duration_seconds(400)
-    assert est < 5.0
+    assert est < 30.0
 
     # Test legacy backward compatibility WPM values
-    for legacy_wpm in [60.0, 120.0, 250.0, 300.0]:
+    for legacy_wpm in [5.0, 60.0, 120.0, 250.0, 300.0]:
         cfg = TypingConfig(speed_wpm=legacy_wpm)
         assert cfg.speed_wpm == legacy_wpm
 
