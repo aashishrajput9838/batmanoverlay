@@ -1,8 +1,10 @@
 """Custom list item widget representing a clipboard item card."""
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -76,7 +78,13 @@ class ClipboardItemCard(QWidget):
 
         # Type Icon
         self.type_icon = QLabel(self)
-        icon_name = "code" if self.item.content_type == ClipboardItemType.CODE else "clipboard"
+        if self.item.content_type == ClipboardItemType.CODE:
+            icon_name = "code"
+        elif self.item.content_type == ClipboardItemType.IMAGE:
+            icon_name = "search"
+        else:
+            icon_name = "clipboard"
+
         self.type_icon.setPixmap(IconManager.get_icon(icon_name).pixmap(16, 16))
         header_row.addWidget(self.type_icon)
 
@@ -86,6 +94,8 @@ class ClipboardItemCard(QWidget):
             badge_color = "#A6E3A1"
         elif self.item.content_type == ClipboardItemType.URL:
             badge_color = "#CBA6F7"
+        elif self.item.content_type == ClipboardItemType.IMAGE:
+            badge_color = "#FAB387"
 
         type_str = (
             f"<font color='{badge_color}'><b>{self.item.content_type.value.upper()}</b></font>"
@@ -103,7 +113,12 @@ class ClipboardItemCard(QWidget):
         main_layout.addLayout(header_row)
 
         # Snippet text label
-        self.text_label = QLabel(self.item.content, self)
+        display_text = self.item.content
+        if self.item.content_type == ClipboardItemType.IMAGE:
+            p = Path(self.item.content)
+            display_text = f"📸 Screenshot: {p.name}"
+
+        self.text_label = QLabel(display_text, self)
         self.text_label.setWordWrap(True)
         self.text_label.setMaximumHeight(64)
         self.text_label.setStyleSheet("color: #CDD6F4; font-size: 13px;")
@@ -115,10 +130,13 @@ class ClipboardItemCard(QWidget):
         meta_row.setSpacing(8)
 
         # Character/Word Metrics Badge
-        meta_str = (
-            f"<font color='#6C7086'>{self.item.char_count} chars &bull; "
-            f"{self.item.word_count} words</font>"
-        )
+        if self.item.content_type == ClipboardItemType.IMAGE:
+            meta_str = "<font color='#6C7086'>Image / Screenshot File</font>"
+        else:
+            meta_str = (
+                f"<font color='#6C7086'>{self.item.char_count} chars &bull; "
+                f"{self.item.word_count} words</font>"
+            )
         self.meta_label = QLabel(meta_str, self)
         meta_row.addWidget(self.meta_label)
 
@@ -182,7 +200,18 @@ class ClipboardItemCard(QWidget):
         self.time_label.setText(format_relative_time(self.item.timestamp))
 
     def _on_copy_clicked(self) -> None:
-        QApplication.clipboard().setText(self.item.content)
+        if self.item.content_type == ClipboardItemType.IMAGE:
+            p = Path(self.item.content)
+            if p.exists():
+                pix = QPixmap(str(p))
+                if not pix.isNull():
+                    QApplication.clipboard().setImage(pix.toImage())
+                else:
+                    QApplication.clipboard().setText(self.item.content)
+            else:
+                QApplication.clipboard().setText(self.item.content)
+        else:
+            QApplication.clipboard().setText(self.item.content)
         self.copy_requested.emit(self.item.id)
 
     def mouseDoubleClickEvent(self, event: object) -> None:

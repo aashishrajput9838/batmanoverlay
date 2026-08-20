@@ -30,19 +30,20 @@ class ClipboardService(QObject):
         if self._monitor:
             self._monitor.text_captured.connect(self._on_text_captured)
 
-    def _on_text_captured(self, text: str) -> None:
-        """Process text captured from system clipboard monitor."""
-        self.add_text(text)
-
-    def add_text(self, text: str, source_app: str | None = None) -> ClipboardItem | None:
-        """Validate, persist, and emit signal for new text clipboard entry."""
-        if not text or not text.strip():
+    def add_item(
+        self,
+        content: str,
+        content_type: ClipboardItemType = ClipboardItemType.TEXT,
+        source_app: str | None = None,
+    ) -> ClipboardItem | None:
+        """Validate, persist, and emit signal for a new clipboard entry (text, code, image, file)."""
+        if not content or not content.strip():
             return None
 
         try:
             item = ClipboardItem(
-                content=text,
-                content_type=ClipboardItemType.TEXT,
+                content=content,
+                content_type=content_type,
                 source_app=source_app,
             )
             saved_item = self._repository.save_item(item)
@@ -54,11 +55,15 @@ class ClipboardService(QObject):
             # Notify application subscribers
             self._signals.clipboard_item_added.emit(saved_item.id)
             self._signals.status_message.emit("Clipboard entry recorded")
-            logger.info(f"Clipboard entry added: {saved_item.id}")
+            logger.info(f"Clipboard entry added ({content_type}): {saved_item.id}")
             return saved_item
         except Exception as e:
             logger.error(f"Failed to add clipboard item: {e}")
             return None
+
+    def add_text(self, text: str, source_app: str | None = None) -> ClipboardItem | None:
+        """Validate, persist, and emit signal for new text clipboard entry."""
+        return self.add_item(content=text, content_type=ClipboardItemType.TEXT, source_app=source_app)
 
     def get_history(self, limit: int = 100, offset: int = 0) -> list[ClipboardItem]:
         """Fetch history entries."""

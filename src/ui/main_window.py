@@ -14,6 +14,7 @@ from PySide6.QtGui import (
     QIcon,
     QKeySequence,
     QMoveEvent,
+    QPixmap,
     QResizeEvent,
     QShortcut,
     QShowEvent,
@@ -42,6 +43,7 @@ from src.constants import (
 )
 from src.core.config_manager import ConfigManager
 from src.core.events import AppSignals
+from src.models.clipboard import ClipboardItemType
 from src.models.session import WindowGeometry
 from src.platform.global_hotkey import (
     HOTKEY_ID_CTRL_ALT_E,
@@ -347,6 +349,22 @@ class MainWindow(QMainWindow):
             self.activateWindow()
 
         if result.success and result.file_path:
+            # 1. Copy screenshot image to system clipboard
+            if result.pixmap and not result.pixmap.isNull():
+                QGuiApplication.clipboard().setImage(result.pixmap.toImage())
+            elif result.file_path.exists():
+                pix = QPixmap(str(result.file_path))
+                if not pix.isNull():
+                    QGuiApplication.clipboard().setImage(pix.toImage())
+
+            # 2. Register screenshot in BatmanOverlay Clipboard service history
+            if self._clipboard_service and hasattr(self._clipboard_service, "add_item"):
+                self._clipboard_service.add_item(
+                    content=str(result.file_path),
+                    content_type=ClipboardItemType.IMAGE,
+                    source_app="batmanoverlay",
+                )
+
             msg = f"Screenshot saved: {result.file_path.name}"
             self._signals.toast_requested.emit("info", msg)
             self._signals.status_message.emit(f"Screenshot saved to {result.file_path}")

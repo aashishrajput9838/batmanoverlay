@@ -38,6 +38,13 @@ class IClipboardService(Protocol):
 
     def add_text(self, text: str, source_app: str | None = None) -> ClipboardItem | None: ...
 
+    def add_item(
+        self,
+        content: str,
+        content_type: str = "text",
+        source_app: str | None = None,
+    ) -> ClipboardItem | None: ...
+
     def get_history(self, limit: int = 100, offset: int = 0) -> list[ClipboardItem]: ...
 
     def search(self, query_str: str, limit: int = 50) -> list[ClipboardItem]: ...
