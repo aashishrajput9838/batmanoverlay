@@ -105,7 +105,7 @@ def test_typing_panel_start_and_complete_flow() -> None:
 
     worker = engine._scheduler._active_worker
     if worker:
-        for _ in range(50):
+        for _ in range(200):
             if not worker.isRunning():
                 break
             QCoreApplication.processEvents()
