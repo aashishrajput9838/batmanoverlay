@@ -53,6 +53,7 @@ from src.platform.global_hotkey import (
     WindowsGlobalHotkeyManager,
 )
 from src.platform.screenshot import CaptureStatus, ScreenshotService
+from src.platform.security import apply_uipi_message_filter, harden_process_security
 from src.platform.zorder_manager import ZOrderWatchdogManager
 from src.storage.json_store import JsonStore
 from src.ui.browser_panel import BrowserPanel
@@ -125,6 +126,9 @@ class MainWindow(QMainWindow):
         self._hotkey_manager = WindowsGlobalHotkeyManager()
         self._hotkey_registered = False
         self._zorder_manager = ZOrderWatchdogManager()
+
+        # Apply conservative Win32 process security descriptor verification
+        harden_process_security()
 
         # Setup Debounced Geometry Save Timer
         self._geometry_timer = QTimer(self)
@@ -410,6 +414,7 @@ class MainWindow(QMainWindow):
         hwnd = int(self.winId()) if self.winId() else 0
         if hwnd:
             self._zorder_manager.set_hwnd(hwnd)
+            self._zorder_manager.set_affinity_callback(self._apply_native_display_affinity)
             if is_pinned:
                 self._zorder_manager.start_watchdog(hwnd)
             else:
@@ -593,6 +598,9 @@ class MainWindow(QMainWindow):
         super().showEvent(event)
         self._apply_native_taskbar_suppression()
         self._apply_native_display_affinity()
+        hwnd = int(self.winId()) if self.winId() else 0
+        if hwnd:
+            apply_uipi_message_filter(hwnd)
         if not self._hotkey_registered:
             self._register_global_hotkeys()
 

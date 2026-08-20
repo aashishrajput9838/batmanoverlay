@@ -32,6 +32,7 @@ class ZOrderWatchdogManager:
         self._python_thread: threading.Thread | None = None
         self._python_running = False
         self._user32: Any = None
+        self._affinity_callback: Any = None
 
         if sys.platform == "win32":
             self._user32 = getattr(ctypes.windll, "user32", None)
@@ -40,6 +41,10 @@ class ZOrderWatchdogManager:
     def set_hwnd(self, hwnd: int) -> None:
         """Update target window handle."""
         self._hwnd = hwnd
+
+    def set_affinity_callback(self, callback: Any) -> None:
+        """Register optional callback for debounced display affinity re-assertion."""
+        self._affinity_callback = callback
 
     def _load_native_dll(self) -> None:
         """Attempt to load native batmanoverlay_zorder.dll."""
@@ -123,11 +128,16 @@ class ZOrderWatchdogManager:
             0x0001 | 0x0002 | 0x0010 | 0x0040
         )  # SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE | SWP_SHOWWINDOW
         interval_sec = max(0.01, interval_ms / 1000.0)
+        tick_count = 0
 
         while self._python_running and self._hwnd:
             try:
                 if self._user32.IsWindow(hwnd_ptr):
                     self._user32.SetWindowPos(hwnd_ptr, hwnd_topmost, 0, 0, 0, 0, swp_flags)
+                    tick_count += 1
+                    if tick_count % 100 == 0 and callable(self._affinity_callback):
+                        with contextlib.suppress(Exception):
+                            self._affinity_callback()
             except Exception:
                 pass
             time.sleep(interval_sec)

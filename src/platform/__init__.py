@@ -14,6 +14,7 @@ from src.platform.global_hotkey import (
 from src.platform.mock_target import MockKeyInputSender, MockTargetAcquirer
 from src.platform.models import TargetInfo, ValidationResult
 from src.platform.protocols import IKeyInputSender, ITargetAcquirer
+from src.platform.security import apply_uipi_message_filter, harden_process_security
 from src.platform.windows_target import WindowsKeyInputSender, WindowsTargetAcquirer
 
 
@@ -47,6 +48,8 @@ __all__ = [
     "WindowsGlobalHotkeyManager",
     "WindowsKeyInputSender",
     "WindowsTargetAcquirer",
+    "apply_uipi_message_filter",
     "get_platform_input_sender",
     "get_platform_target_acquirer",
+    "harden_process_security",
 ]
