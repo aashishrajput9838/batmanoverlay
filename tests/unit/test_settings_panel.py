@@ -50,3 +50,21 @@ def test_settings_panel_legacy_config_backward_compatibility(tmp_data_dir: Path)
 
     panel = SettingsPanel(config_mgr)
     assert panel.overlay_visibility_panel.get_transparency() == 75.0
+
+
+@pytest.mark.unit
+@pytest.mark.usefixtures("qapp")
+def test_settings_panel_hide_from_capture_checkbox(tmp_data_dir: Path) -> None:
+    """Verify hide_from_capture checkbox initializes to True and updates config on change."""
+    config_mgr = ConfigManager(tmp_data_dir)
+    panel = SettingsPanel(config_mgr)
+
+    assert hasattr(panel, "_chk_hide_capture")
+    assert panel._chk_hide_capture.isChecked() is True
+    assert config_mgr.get("appearance.hide_from_capture") is True
+
+    panel._chk_hide_capture.setChecked(False)
+    assert config_mgr.get("appearance.hide_from_capture") is False
+
+    panel._chk_hide_capture.setChecked(True)
+    assert config_mgr.get("appearance.hide_from_capture") is True

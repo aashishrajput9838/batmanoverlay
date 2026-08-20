@@ -1,6 +1,7 @@
 """Minimal Settings Form Panel Widget for batmanoverlay."""
 
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFormLayout,
     QGroupBox,
@@ -58,10 +59,17 @@ class SettingsPanel(QWidget):
         container_layout.addWidget(self.overlay_visibility_panel)
 
         # Screenshot & Multi-Monitor Settings Group Box
-        shot_group = QGroupBox("Screenshot & Display Capture Settings", container)
+        shot_group = QGroupBox("Display Capture & Privacy Settings", container)
         shot_layout = QFormLayout(shot_group)
         shot_layout.setContentsMargins(12, 12, 12, 12)
         shot_layout.setSpacing(10)
+
+        self._chk_hide_capture = QCheckBox("Hide overlay from screen sharing / capture (Google Meet, Zoom, Teams)", shot_group)
+        self._chk_hide_capture.setToolTip(
+            "Uses Windows SetWindowDisplayAffinity (WDA_EXCLUDEFROMCAPTURE) to keep the overlay visible on your monitor while hiding it from screen shares and recordings."
+        )
+        self._chk_hide_capture.stateChanged.connect(self._on_hide_capture_changed)
+        shot_layout.addRow(self._chk_hide_capture)
 
         self._combo_screen = QComboBox(shot_group)
         self._combo_screen.addItem("Ask every time (when multiple monitors connected)", "ask")
@@ -80,6 +88,10 @@ class SettingsPanel(QWidget):
         """Handle transparency changes from the panel."""
         self._config_manager.set("appearance.overlay_transparency", value)
 
+    def _on_hide_capture_changed(self, state: int) -> None:
+        """Handle hide overlay from capture setting changes."""
+        self._config_manager.set("appearance.hide_from_capture", bool(state))
+
     def _on_screen_selection_changed(self, index: int) -> None:
         """Handle screenshot screen selection setting changes."""
         val = self._combo_screen.itemData(index)
@@ -90,6 +102,9 @@ class SettingsPanel(QWidget):
         """Load current values from ConfigManager into controls."""
         settings = self._config_manager.settings()
         self.overlay_visibility_panel.set_transparency(settings.appearance.overlay_transparency)
+
+        hide_cap = bool(self._config_manager.get("appearance.hide_from_capture", True))
+        self._chk_hide_capture.setChecked(hide_cap)
 
         sel = str(self._config_manager.get("screenshot.screen_selection", "ask"))
         idx = self._combo_screen.findData(sel)

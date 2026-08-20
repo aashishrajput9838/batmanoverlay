@@ -26,6 +26,7 @@ class AppearanceSettings(BaseModel):
     font_scale: float = Field(default=1.0, ge=0.8, le=2.0)
     default_opacity: float = Field(default=1.0, ge=0.1, le=1.0)
     overlay_transparency: float = Field(default=0.0, ge=0.0, le=99.99)
+    hide_from_capture: bool = True
 
     @field_validator("overlay_transparency", mode="before")
     @classmethod

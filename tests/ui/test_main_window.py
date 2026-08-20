@@ -39,3 +39,23 @@ def test_main_window_controls_and_panels(tmp_data_dir: Path) -> None:
     assert window.windowOpacity() == 0.8
 
     window.close()
+
+
+@pytest.mark.ui
+@pytest.mark.usefixtures("qapp")
+def test_main_window_display_affinity_and_capture_exclusion(tmp_data_dir: Path) -> None:
+    """Verify MainWindow invokes _apply_native_display_affinity on config change."""
+    config_mgr = ConfigManager(tmp_data_dir)
+    signals = AppSignals()
+    window = MainWindow(config_mgr, signals, tmp_data_dir)
+
+    called = []
+    window._apply_native_display_affinity = lambda: called.append(True)
+
+    config_mgr.set("appearance.hide_from_capture", False)
+    assert len(called) == 1
+
+    config_mgr.set("appearance.hide_from_capture", True)
+    assert len(called) == 2
+
+    window.close()

@@ -247,6 +247,7 @@ class MainWindow(QMainWindow):
         # AppSignals
         self._signals.panel_changed.connect(self.switch_panel)
         self._signals.toast_requested.connect(self.toast_manager.show_toast)
+        self._config_manager.config_changed.connect(self._on_config_changed)
 
         # Global Opacity Control Shortcuts (Ctrl+Q & Ctrl+W)
         self._shortcut_decrease_opacity = QShortcut(QKeySequence("Ctrl+Q"), self)
@@ -261,6 +262,11 @@ class MainWindow(QMainWindow):
         self._shortcut_screenshot = QShortcut(QKeySequence("Ctrl+Shift+S"), self)
         self._shortcut_screenshot.setContext(Qt.ShortcutContext.ApplicationShortcut)
         self._shortcut_screenshot.activated.connect(self.take_screenshot)
+
+    def _on_config_changed(self, key_path: str, value: Any) -> None:
+        """React to configuration key updates."""
+        if key_path == "appearance.hide_from_capture":
+            self._apply_native_display_affinity()
 
     def decrease_opacity(self) -> None:
         """Decrease window opacity by 5% step (increase UI transparency, max 99.99%)."""
@@ -333,6 +339,7 @@ class MainWindow(QMainWindow):
         if was_visible:
             self.show()
             self._apply_native_taskbar_suppression()
+            self._apply_native_display_affinity()
             self.activateWindow()
 
         if result.success and result.file_path:
@@ -398,6 +405,7 @@ class MainWindow(QMainWindow):
         self.setWindowFlags(flags)
         self.show()  # Re-show required after window flags mutation on Windows
         self._apply_native_taskbar_suppression()
+        self._apply_native_display_affinity()
 
         hwnd = int(self.winId()) if self.winId() else 0
         if hwnd:
@@ -469,6 +477,30 @@ class MainWindow(QMainWindow):
                     if old_style != new_style:
                         set_style(hwnd_ptr, gwl_exstyle, new_style)
 
+    def _apply_native_display_affinity(self) -> None:
+        """Enforce native Win32 SetWindowDisplayAffinity (WDA_EXCLUDEFROMCAPTURE) to exclude window from screen capture/sharing."""
+        with contextlib.suppress(Exception):
+            hwnd = int(self.winId()) if self.winId() else 0
+            if hwnd and hasattr(ctypes, "windll"):
+                user32 = getattr(ctypes.windll, "user32", None)
+                if user32 and hasattr(user32, "SetWindowDisplayAffinity"):
+                    user32.SetWindowDisplayAffinity.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+                    user32.SetWindowDisplayAffinity.restype = ctypes.c_bool
+
+                    hwnd_ptr = ctypes.c_void_p(hwnd)
+                    hide_from_capture = bool(
+                        self._config_manager.get("appearance.hide_from_capture", True)
+                    )
+                    if hide_from_capture:
+                        # WDA_EXCLUDEFROMCAPTURE = 0x00000011 (Win10 2004+ / Build 19041+)
+                        res = user32.SetWindowDisplayAffinity(hwnd_ptr, 0x00000011)
+                        if not res:
+                            # Fallback WDA_MONITOR = 0x00000001 for legacy Windows builds
+                            user32.SetWindowDisplayAffinity(hwnd_ptr, 0x00000001)
+                    else:
+                        # WDA_NONE = 0x00000000
+                        user32.SetWindowDisplayAffinity(hwnd_ptr, 0x00000000)
+
     def restore_and_focus(self) -> None:
         """Restore window from minimized state and force focus without altering transparency."""
         if self.isMinimized():
@@ -479,6 +511,7 @@ class MainWindow(QMainWindow):
 
         self.show()
         self._apply_native_taskbar_suppression()
+        self._apply_native_display_affinity()
         self.raise_()
         self.activateWindow()
         self.setFocus()
@@ -559,6 +592,7 @@ class MainWindow(QMainWindow):
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
         self._apply_native_taskbar_suppression()
+        self._apply_native_display_affinity()
         if not self._hotkey_registered:
             self._register_global_hotkeys()
 
