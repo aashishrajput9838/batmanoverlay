@@ -1,7 +1,10 @@
 """Reusable modal dialogs for batmanoverlay."""
 
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QKeyEvent, QScreen
 from PySide6.QtWidgets import (
     QApplication,
+    QButtonGroup,
     QCheckBox,
     QDialog,
     QFormLayout,
@@ -9,6 +12,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QRadioButton,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -305,3 +309,148 @@ class TargetPreviewDialog(QDialog):
     def dont_show_again(self) -> bool:
         """Return True if user requested disabling preview mode."""
         return self.dont_show_cb.isChecked()
+
+
+class ScreenSelectionDialog(QDialog):
+    """Modal dialog asking user which screen/monitor (or full desktop) to capture."""
+
+    def __init__(
+        self,
+        screens: list[QScreen],
+        primary_screen: QScreen | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Select Screen to Capture")
+        self.setMinimumWidth(480)
+        self.setModal(True)
+
+        self._screens = screens
+        self._primary_screen = primary_screen or (screens[0] if screens else None)
+        self._selected_index: int | None = 0
+        self._radio_buttons: list[QRadioButton] = []
+
+        self._setup_ui()
+
+    def _setup_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(14)
+
+        header_layout = QHBoxLayout()
+        header_icon = QLabel(self)
+        header_icon.setPixmap(IconManager.get_icon("screenshot").pixmap(28, 28))
+        header_layout.addWidget(header_icon)
+
+        title_box = QVBoxLayout()
+        title_box.setSpacing(2)
+        title_label = QLabel("<b>Select Target Display to Capture</b>", self)
+        title_label.setStyleSheet("font-size: 14px; color: #CDD6F4;")
+        desc_label = QLabel(
+            f"Detected {len(self._screens)} monitors. "
+            "Select display to capture or press number key.",
+            self,
+        )
+        desc_label.setStyleSheet("font-size: 11px; color: #A6ADC8;")
+        desc_label.setWordWrap(True)
+        title_box.addWidget(title_label)
+        title_box.addWidget(desc_label)
+
+        header_layout.addLayout(title_box, stretch=1)
+        layout.addLayout(header_layout)
+
+        options_group = QGroupBox("Available Displays", self)
+        options_layout = QVBoxLayout(options_group)
+        options_layout.setContentsMargins(12, 12, 12, 12)
+        options_layout.setSpacing(10)
+
+        self._button_group = QButtonGroup(self)
+
+        for idx, s in enumerate(self._screens):
+            geo = s.geometry()
+            is_prim = (self._primary_screen is not None) and (
+                s == self._primary_screen or s.name() == self._primary_screen.name()
+            )
+            prim_tag = " ★ Primary" if is_prim else ""
+            shortcut_hint = f" [Press {idx + 1}]"
+            label_text = (
+                f"Display {idx + 1}: {geo.width()}x{geo.height()} "
+                f"({s.name()}){prim_tag}{shortcut_hint}"
+            )
+
+            rb = QRadioButton(label_text, self)
+            rb.setStyleSheet("font-weight: bold; color: #CDD6F4;")
+            if idx == 0:
+                rb.setChecked(True)
+
+            options_layout.addWidget(rb)
+            self._button_group.addButton(rb, idx)
+            self._radio_buttons.append(rb)
+
+        if self._screens:
+            min_x = min(s.geometry().x() for s in self._screens)
+            min_y = min(s.geometry().y() for s in self._screens)
+            max_x = max(s.geometry().x() + s.geometry().width() for s in self._screens)
+            max_y = max(s.geometry().y() + s.geometry().height() for s in self._screens)
+            virt_w = max_x - min_x
+            virt_h = max_y - min_y
+
+            all_label = f"All Displays (Full Desktop): {virt_w}x{virt_h} [Press A or 0]"
+            rb_all = QRadioButton(all_label, self)
+            rb_all.setStyleSheet("font-weight: bold; color: #89B4FA;")
+            options_layout.addWidget(rb_all)
+            self._button_group.addButton(rb_all, -1)
+
+        layout.addWidget(options_group)
+
+        self.remember_cb = QCheckBox("Remember choice for future screenshots", self)
+        self.remember_cb.setStyleSheet("color: #BAC2DE; font-size: 11px;")
+        layout.addWidget(self.remember_cb)
+
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+
+        btn_cancel = QPushButton("Cancel", self)
+        btn_cancel.clicked.connect(self.reject)
+        btn_layout.addWidget(btn_cancel)
+
+        btn_capture = QPushButton("Capture Selected", self)
+        btn_capture.setDefault(True)
+        btn_capture.clicked.connect(self._on_capture_clicked)
+        btn_layout.addWidget(btn_capture)
+
+        layout.addLayout(btn_layout)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:
+        """Allow number keys (1..9) or 'A' / '0' to fast-select screen."""
+        key = event.key()
+        if Qt.Key.Key_1 <= key <= Qt.Key.Key_9:
+            idx = key - Qt.Key.Key_1
+            if 0 <= idx < len(self._screens):
+                btn = self._button_group.button(idx)
+                if btn:
+                    btn.setChecked(True)
+                    self._on_capture_clicked()
+                    return
+        elif key in (Qt.Key.Key_0, Qt.Key.Key_A):
+            btn_all = self._button_group.button(-1)
+            if btn_all:
+                btn_all.setChecked(True)
+                self._on_capture_clicked()
+                return
+        super().keyPressEvent(event)
+
+    def _on_capture_clicked(self) -> None:
+        checked_id = self._button_group.checkedId()
+        self._selected_index = checked_id if checked_id != -2 else 0
+        self.accept()
+
+    def get_selected_screen_index(self) -> int | None:
+        """Return screen index (0..N-1), -1 for All Displays, or None if cancelled."""
+        if self.result() == QDialog.DialogCode.Accepted:
+            return self._selected_index
+        return None
+
+    def get_remember_choice(self) -> bool:
+        """Return True if user checked remember choice checkbox."""
+        return self.remember_cb.isChecked() if self.remember_cb else False

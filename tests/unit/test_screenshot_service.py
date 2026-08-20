@@ -133,3 +133,33 @@ def test_screenshot_result_dataclass() -> None:
     assert res.backend_used == "QtQScreen"
     assert res.is_protected_content is False
     assert res.detected_apps == ["Chrome", "VSCode"]
+
+
+@pytest.mark.unit
+@pytest.mark.usefixtures("qapp")
+def test_take_screenshot_target_screen_geometry_crop(tmp_path: Path) -> None:
+    """Verify take_screenshot crops full desktop pixmap to target screen rectangle."""
+    from PySide6.QtCore import QRect
+
+    service = ScreenshotService()
+    qimg = QImage(200, 100, QImage.Format.Format_RGB32)
+    for y in range(100):
+        for x in range(200):
+            qimg.setPixelColor(x, y, QColor(x, y, (x + y) % 255))
+    dummy_pixmap = QPixmap.fromImage(qimg)
+
+    target_rect = QRect(0, 0, 100, 100)
+
+    with (
+        patch.object(WindowDetector, "get_visible_windows", return_value=[]),
+        patch.object(
+            WindowsCapture,
+            "capture_full_desktop",
+            return_value=(CaptureStatus.SUCCESS, dummy_pixmap, "TestBackend"),
+        ),
+    ):
+        result = service.take_screenshot(output_dir=tmp_path, target_screen_geometry=target_rect)
+        assert result.status == CaptureStatus.SUCCESS
+        assert result.success is True
+        assert result.file_path is not None
+        assert result.file_path.exists()

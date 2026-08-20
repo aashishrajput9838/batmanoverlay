@@ -5,6 +5,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from loguru import logger
+from PySide6.QtCore import QRect
+from PySide6.QtGui import QGuiApplication, QPixmap
 
 from src.platform.screenshot.backend_interface import CaptureStatus
 from src.platform.screenshot.frame_analyzer import FrameAnalyzer
@@ -107,8 +109,47 @@ class ScreenshotService:
             protected_process_name=proc_name,
         )
 
-    def take_screenshot(self, output_dir: Path | None = None) -> ScreenshotResult:
-        """Capture virtual desktop with application-aware filename generation and validation."""
+    @classmethod
+    def _crop_pixmap_to_target_screen(
+        cls, pixmap: QPixmap, target_screen_geometry: QRect
+    ) -> QPixmap:
+        """Crop composite desktop pixmap to target screen rectangle."""
+        screens = QGuiApplication.screens()
+        if not screens or pixmap is None or pixmap.isNull():
+            return pixmap
+
+        min_x = min(s.geometry().x() for s in screens)
+        min_y = min(s.geometry().y() for s in screens)
+        max_x = max(s.geometry().x() + s.geometry().width() for s in screens)
+        max_y = max(s.geometry().y() + s.geometry().height() for s in screens)
+
+        virt_w = max_x - min_x
+        virt_h = max_y - min_y
+
+        if virt_w <= 0 or virt_h <= 0:
+            return pixmap
+
+        scale_x = pixmap.width() / virt_w
+        scale_y = pixmap.height() / virt_h
+
+        crop_x = int((target_screen_geometry.x() - min_x) * scale_x)
+        crop_y = int((target_screen_geometry.y() - min_y) * scale_y)
+        crop_w = int(target_screen_geometry.width() * scale_x)
+        crop_h = int(target_screen_geometry.height() * scale_y)
+
+        crop_x = max(0, min(crop_x, pixmap.width() - 1))
+        crop_y = max(0, min(crop_y, pixmap.height() - 1))
+        crop_w = max(1, min(crop_w, pixmap.width() - crop_x))
+        crop_h = max(1, min(crop_h, pixmap.height() - crop_y))
+
+        return pixmap.copy(crop_x, crop_y, crop_w, crop_h)
+
+    def take_screenshot(
+        self,
+        output_dir: Path | None = None,
+        target_screen_geometry: QRect | None = None,
+    ) -> ScreenshotResult:
+        """Capture desktop or selected screen with application-aware filename generation."""
         try:
             target_dir = output_dir or self.get_default_screenshots_dir()
 
@@ -152,6 +193,10 @@ class ScreenshotService:
                     error_message="Screenshot capture unavailable.",
                     detected_apps=detected_app_names,
                 )
+
+            # Crop pixmap to target screen if specified
+            if target_screen_geometry is not None:
+                pixmap = self._crop_pixmap_to_target_screen(pixmap, target_screen_geometry)
 
             # 3. Representative capture analysis
             is_rep, rep_reason = FrameAnalyzer.analyze_frame(pixmap, visible_windows)

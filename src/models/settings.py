@@ -63,6 +63,11 @@ class AccessibilitySettings(BaseModel):
     focus_indicators: bool = True
 
 
+class ScreenshotSettings(BaseModel):
+    screen_selection: str = Field(default="ask", pattern=r"^(ask|primary|all|[0-9]+)$")
+    save_directory: str | None = None
+
+
 class AppSettings(BaseModel):
     """Root Application Settings model."""
 
@@ -76,3 +81,4 @@ class AppSettings(BaseModel):
     downloads: DownloadSettings = Field(default_factory=DownloadSettings)
     clipboard: ClipboardSettings = Field(default_factory=ClipboardSettings)
     accessibility: AccessibilitySettings = Field(default_factory=AccessibilitySettings)
+    screenshot: ScreenshotSettings = Field(default_factory=ScreenshotSettings)

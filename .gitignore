@@ -97,7 +97,3 @@ ehthumbs.db
 Desktop.ini
 $RECYCLE.BIN/
 .DS_Store
-
-# Temporary scratch files & screenshots
-scratch_*
-

@@ -10,6 +10,7 @@ from typing import Any
 from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtGui import (
     QCloseEvent,
+    QGuiApplication,
     QIcon,
     QKeySequence,
     QMoveEvent,
@@ -19,6 +20,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -55,6 +57,7 @@ from src.platform.zorder_manager import ZOrderWatchdogManager
 from src.storage.json_store import JsonStore
 from src.ui.browser_panel import BrowserPanel
 from src.ui.clipboard_panel import ClipboardPanel
+from src.ui.dialogs import ScreenSelectionDialog
 from src.ui.overlay_visibility_panel import OverlayVisibilityPanel
 from src.ui.settings_panel import SettingsPanel
 from src.ui.sidebar import Sidebar
@@ -273,16 +276,59 @@ class MainWindow(QMainWindow):
         self.overlay_visibility_panel.set_transparency(new_t)
         self._on_transparency_changed(new_t)
 
+    def _get_target_screen_geometry(self, screens: list[Any]) -> tuple[bool, Any | None]:
+        """Resolve target screen geometry for screenshot, returning (should_proceed, rect)."""
+        if len(screens) <= 1:
+            rect = screens[0].geometry() if screens else None
+            return True, rect
+
+        setting = str(self._config_manager.get("screenshot.screen_selection", "ask"))
+
+        if setting == "primary":
+            primary = QGuiApplication.primaryScreen()
+            return True, (primary.geometry() if primary else None)
+        if setting == "all":
+            return True, None
+        if setting.isdigit():
+            idx = int(setting)
+            if 0 <= idx < len(screens):
+                return True, screens[idx].geometry()
+
+        dlg = ScreenSelectionDialog(
+            screens=screens,
+            primary_screen=QGuiApplication.primaryScreen(),
+            parent=self,
+        )
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return False, None
+
+        choice_idx = dlg.get_selected_screen_index()
+        if choice_idx is None:
+            return False, None
+
+        rect = screens[choice_idx].geometry() if (0 <= choice_idx < len(screens)) else None
+
+        if dlg.get_remember_choice():
+            val_to_save = "all" if choice_idx == -1 else str(choice_idx)
+            self._config_manager.set("screenshot.screen_selection", val_to_save)
+
+        return True, rect
+
     def take_screenshot(self) -> None:
-        """Execute full-screen desktop screenshot with temporary window exclusion."""
+        """Execute desktop screenshot with screen selection for multi-monitor setups."""
         service = self._screenshot_service or ScreenshotService()
+        screens = QGuiApplication.screens()
+
+        should_proceed, target_rect = self._get_target_screen_geometry(screens)
+        if not should_proceed:
+            return
 
         was_visible = self.isVisible()
         if was_visible:
             self.hide()
             QApplication.processEvents()
 
-        result = service.take_screenshot()
+        result = service.take_screenshot(target_screen_geometry=target_rect)
 
         if was_visible:
             self.show()
