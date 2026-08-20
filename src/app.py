@@ -96,6 +96,12 @@ class BatmanOverlayApp(QApplication):
         # 2. ConfigManager
         self.config_manager = ConfigManager(self.data_dir)
 
+        # 2.5 Global Display Affinity Security Filter
+        from src.platform.security import DisplayAffinityEventFilter
+
+        self.affinity_event_filter = DisplayAffinityEventFilter(self.config_manager, self)
+        self.installEventFilter(self.affinity_event_filter)
+
         # 3. Signals & Notifications
         self.signals = AppSignals()
         self.notification_manager = NotificationManager(self.signals)

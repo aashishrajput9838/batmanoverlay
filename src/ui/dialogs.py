@@ -1,7 +1,5 @@
-"""Reusable modal dialogs for batmanoverlay."""
-
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QKeyEvent, QScreen
+from PySide6.QtGui import QKeyEvent, QScreen, QShowEvent
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -20,10 +18,21 @@ from PySide6.QtWidgets import (
 
 from src.models.clipboard import ClipboardItem
 from src.platform.models import TargetInfo
+from src.platform.security import apply_display_affinity_to_hwnd
 from src.ui.icons import IconManager
 
 
-class ConfirmDialog(QDialog):
+class SecureDialog(QDialog):
+    """Base modal dialog enforcing display capture exclusion (WDA_EXCLUDEFROMCAPTURE = 0x11) on Windows."""
+
+    def showEvent(self, event: QShowEvent) -> None:
+        super().showEvent(event)
+        hwnd = int(self.winId())
+        if hwnd:
+            apply_display_affinity_to_hwnd(hwnd, True)
+
+
+class ConfirmDialog(SecureDialog):
     """Generic modal confirmation dialog."""
 
     def __init__(self, title: str, message: str, parent: QWidget | None = None) -> None:
@@ -54,7 +63,7 @@ class ConfirmDialog(QDialog):
         layout.addLayout(btn_layout)
 
 
-class ErrorDialog(QDialog):
+class ErrorDialog(SecureDialog):
     """Modal error dialog displaying structured error information and stack trace details."""
 
     def __init__(
@@ -115,7 +124,7 @@ class ErrorDialog(QDialog):
         layout.addLayout(btn_layout)
 
 
-class ClearHistoryDialog(QDialog):
+class ClearHistoryDialog(SecureDialog):
     """Confirmation modal for clearing clipboard repository history."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -161,7 +170,7 @@ class ClearHistoryDialog(QDialog):
 ClipboardClearConfirmDialog = ClearHistoryDialog
 
 
-class RecoveryDialog(QDialog):
+class RecoveryDialog(SecureDialog):
     """Modal dialog for session recovery options."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -197,7 +206,7 @@ class RecoveryDialog(QDialog):
         layout.addLayout(btn_layout)
 
 
-class ClipboardPreviewDialog(QDialog):
+class ClipboardPreviewDialog(SecureDialog):
     """Modal dialog displaying full un-truncated text and metadata for a clipboard item."""
 
     def __init__(self, item: ClipboardItem, parent: QWidget | None = None) -> None:
@@ -246,7 +255,7 @@ class ClipboardPreviewDialog(QDialog):
         layout.addLayout(btn_layout)
 
 
-class TargetPreviewDialog(QDialog):
+class TargetPreviewDialog(SecureDialog):
     """Modal target acquisition preview dialog displayed before typing starts."""
 
     def __init__(
@@ -311,7 +320,7 @@ class TargetPreviewDialog(QDialog):
         return self.dont_show_cb.isChecked()
 
 
-class ScreenSelectionDialog(QDialog):
+class ScreenSelectionDialog(SecureDialog):
     """Modal dialog asking user which screen/monitor (or full desktop) to capture."""
 
     def __init__(

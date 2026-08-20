@@ -14,7 +14,12 @@ from src.platform.global_hotkey import (
 from src.platform.mock_target import MockKeyInputSender, MockTargetAcquirer
 from src.platform.models import TargetInfo, ValidationResult
 from src.platform.protocols import IKeyInputSender, ITargetAcquirer
-from src.platform.security import apply_uipi_message_filter, harden_process_security
+from src.platform.security import (
+    DisplayAffinityEventFilter,
+    apply_display_affinity_to_hwnd,
+    apply_uipi_message_filter,
+    harden_process_security,
+)
 from src.platform.windows_target import WindowsKeyInputSender, WindowsTargetAcquirer
 
 

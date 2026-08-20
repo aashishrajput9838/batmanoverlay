@@ -84,3 +84,67 @@ def apply_uipi_message_filter(hwnd: int) -> bool:
         return success_count > 0
 
     return False
+
+
+WDA_NONE = 0x00000000
+WDA_EXCLUDEFROMCAPTURE = 0x00000011
+
+
+def apply_display_affinity_to_hwnd(hwnd: int, hide_from_capture: bool = True) -> bool:
+    """
+    Apply native SetWindowDisplayAffinity (WDA_EXCLUDEFROMCAPTURE = 0x11) to any HWND.
+
+    Hides the specified window, dialog, popup, or menu from DWM screen capture, recording,
+    and screen sharing (Google Meet, Zoom, OBS, Teams) on Windows 10/11.
+    """
+    if sys.platform != "win32" or not hwnd:
+        return False
+
+    with contextlib.suppress(Exception):
+        user32 = getattr(ctypes.windll, "user32", None)
+        if not user32 or not hasattr(user32, "SetWindowDisplayAffinity"):
+            return False
+
+        affinity = WDA_EXCLUDEFROMCAPTURE if hide_from_capture else WDA_NONE
+        res = user32.SetWindowDisplayAffinity(ctypes.c_void_p(hwnd), ctypes.c_uint32(affinity))
+        if res:
+            logger.debug(f"[SECURITY] SetWindowDisplayAffinity(0x{affinity:x}) applied to HWND {hwnd}")
+        return bool(res)
+
+    return False
+
+
+from PySide6.QtCore import QEvent, QObject, Qt
+from PySide6.QtWidgets import QWidget
+
+
+class DisplayAffinityEventFilter(QObject):
+    """
+    Global QApplication event filter enforcing screen-capture exclusion across
+    ALL top-level windows, modal dialogs, popups, menus, and toasts in BatmanOverlay.
+    """
+
+    def __init__(self, config_manager: Any = None, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._config = config_manager
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if event.type() in (QEvent.Type.Show, QEvent.Type.WinIdChange, QEvent.Type.Polish):
+            if isinstance(watched, QWidget):
+                if watched.isWindow() or watched.parent() is None or bool(
+                    watched.windowFlags()
+                    & (
+                        Qt.WindowType.Window
+                        | Qt.WindowType.Dialog
+                        | Qt.WindowType.Popup
+                        | Qt.WindowType.SubWindow
+                        | Qt.WindowType.ToolTip
+                    )
+                ):
+                    hide_from_capture = True
+                    if self._config:
+                        hide_from_capture = bool(self._config.get("appearance.hide_from_capture", True))
+                    hwnd = int(watched.winId())
+                    if hwnd:
+                        apply_display_affinity_to_hwnd(hwnd, hide_from_capture)
+        return super().eventFilter(watched, event)
