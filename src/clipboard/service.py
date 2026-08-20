@@ -29,10 +29,15 @@ class ClipboardService(QObject):
 
         if self._monitor:
             self._monitor.text_captured.connect(self._on_text_captured)
+            self._monitor.image_captured.connect(self._on_image_captured)
 
     def _on_text_captured(self, text: str) -> None:
         """Process text captured from system clipboard monitor."""
         self.add_text(text)
+
+    def _on_image_captured(self, file_path: str) -> None:
+        """Process image captured from system clipboard monitor."""
+        self.add_item(file_path, content_type=ClipboardItemType.IMAGE)
 
     def add_item(
         self,
