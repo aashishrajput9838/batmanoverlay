@@ -122,3 +122,24 @@ def test_browser_panel_keyboard_shortcuts(
     panel.url_input.setText("https://test.org")
     qtbot.keyClick(panel.url_input, Qt.Key.Key_Return)
     assert panel.url_input.text() == "https://test.org"
+
+
+@pytest.mark.ui
+def test_browser_panel_multi_tab_operations(
+    qtbot: pytest.PyTest, browser_service: BrowserService
+) -> None:
+    signals = AppSignals()
+    panel = BrowserPanel(browser_service, signals)
+    qtbot.addWidget(panel)
+    panel.show()
+
+    assert panel.tab_bar.count() == 1
+
+    # Add new tab
+    new_idx = panel.add_new_tab("https://github.com", "GitHub")
+    assert panel.tab_bar.count() == 2
+    assert panel.tab_bar.currentIndex() == new_idx
+
+    # Close active tab
+    panel.close_tab(new_idx)
+    assert panel.tab_bar.count() == 1

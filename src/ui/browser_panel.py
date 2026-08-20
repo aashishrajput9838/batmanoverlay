@@ -9,6 +9,8 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QProgressBar,
+    QStackedWidget,
+    QTabBar,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -28,7 +30,7 @@ def clean_display_url(url_str: str) -> str:
 
 
 class BrowserPanel(QWidget):
-    """Single-tab web browser panel with navigation toolbar and SSL security status."""
+    """Multi-tab Chrome-style web browser panel with navigation toolbar and SSL security status."""
 
     def __init__(
         self,
@@ -41,14 +43,94 @@ class BrowserPanel(QWidget):
         self.signals = signals
 
         self._is_loading = False
+        self._tabs: list[dict[str, Any]] = []
 
         self._setup_ui()
-        self._connect_signals()
+        self.add_new_tab("about:blank")
+
+    @property
+    def web_view(self) -> QWebEngineView:
+        """Return the active QWebEngineView instance for backward compatibility."""
+        idx = self.tab_stack.currentIndex()
+        if 0 <= idx < self.tab_stack.count():
+            widget = self.tab_stack.currentWidget()
+            if isinstance(widget, QWebEngineView):
+                return widget
+        # Fallback dummy view if no tabs open
+        if not hasattr(self, "_fallback_view"):
+            self._fallback_view = QWebEngineView(self)
+        return self._fallback_view
 
     def _setup_ui(self) -> None:
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(12, 12, 12, 12)
-        main_layout.setSpacing(8)
+        main_layout.setSpacing(6)
+
+        # 0. Chrome-style Tab Bar Row
+        tab_row = QHBoxLayout()
+        tab_row.setSpacing(4)
+
+        self.tab_bar = QTabBar(self)
+        self.tab_bar.setTabsClosable(True)
+        self.tab_bar.setMovable(True)
+        self.tab_bar.setExpanding(False)
+        self.tab_bar.setSelectionBehaviorOnRemove(QTabBar.SelectionBehavior.SelectLeftTab)
+        self.tab_bar.setStyleSheet("""
+            QTabBar::tab {
+                background: #181825;
+                color: #A6ADC8;
+                border: 1px solid #313244;
+                border-bottom: none;
+                border-top-left-radius: 8px;
+                border-top-right-radius: 8px;
+                padding: 6px 14px;
+                min-width: 110px;
+                max-width: 200px;
+                font-size: 12px;
+            }
+            QTabBar::tab:selected {
+                background: #2b3843;
+                color: #FFFFFF;
+                font-weight: bold;
+                border-color: #5B8DEF;
+            }
+            QTabBar::tab:hover:!selected {
+                background: #313244;
+                color: #CDD6F4;
+            }
+            QTabBar::close-button {
+                image: none;
+                subcontrol-position: right;
+            }
+        """)
+        self.tab_bar.currentChanged.connect(self._on_tab_changed)
+        self.tab_bar.tabCloseRequested.connect(self.close_tab)
+        tab_row.addWidget(self.tab_bar, stretch=1)
+
+        # New Tab (+) Button
+        self.btn_new_tab = QToolButton(self)
+        self.btn_new_tab.setText("+")
+        self.btn_new_tab.setToolTip("New Tab (Ctrl+T)")
+        self.btn_new_tab.setAccessibleName("New Tab")
+        self.btn_new_tab.setMinimumSize(28, 28)
+        self.btn_new_tab.setStyleSheet("""
+            QToolButton {
+                background: #181825;
+                color: #CDD6F4;
+                border: 1px solid #313244;
+                border-radius: 6px;
+                font-size: 16px;
+                font-weight: bold;
+            }
+            QToolButton:hover {
+                background: #313244;
+                color: #89B4FA;
+            }
+        """)
+        self.btn_new_tab.clicked.connect(lambda: self.add_new_tab("about:blank"))
+        tab_row.addWidget(self.btn_new_tab)
+
+        main_layout.addLayout(tab_row)
 
         # Navigation Toolbar
         toolbar_layout = QHBoxLayout()
@@ -120,23 +202,125 @@ class BrowserPanel(QWidget):
         self.progress_bar.hide()
         main_layout.addWidget(self.progress_bar)
 
-        # QWebEngineView Web View Container with Persistent QWebEngineProfile
-        self.web_view = QWebEngineView(self)
+        # Stack of QWebEngineViews for multi-tab support
+        self.tab_stack = QStackedWidget(self)
+        main_layout.addWidget(self.tab_stack, stretch=1)
+
+    def add_new_tab(self, raw_url: str = "about:blank", title: str = "New Tab") -> int:
+        """Create and append a new browser tab with persistent QWebEngineProfile."""
+        view = QWebEngineView(self)
         qt_profile = self.service.get_qt_profile("default")
-        self.web_page = QWebEnginePage(qt_profile, self.web_view)
-        self.web_view.setPage(self.web_page)
-        self.web_view.setAccessibleName("Web Page Content View")
-        main_layout.addWidget(self.web_view, stretch=1)
+        page = QWebEnginePage(qt_profile, view)
+        view.setPage(page)
+        view.setAccessibleName("Web Page Content View")
 
-        # Load default starting page
-        self.navigate("about:blank")
+        # Connect view signals
+        view.urlChanged.connect(lambda url, v=view: self._on_tab_url_changed(v, url))
+        view.titleChanged.connect(lambda t, v=view: self._on_tab_title_changed(v, t))
+        view.loadStarted.connect(lambda v=view: self._on_tab_load_started(v))
+        view.loadProgress.connect(lambda p, v=view: self._on_tab_load_progress(v, p))
+        view.loadFinished.connect(lambda s, v=view: self._on_tab_load_finished(v, s))
 
-    def _connect_signals(self) -> None:
-        self.web_view.urlChanged.connect(self._on_url_changed)
-        self.web_view.titleChanged.connect(self._on_title_changed)
-        self.web_view.loadStarted.connect(self._on_load_started)
-        self.web_view.loadProgress.connect(self._on_load_progress)
-        self.web_view.loadFinished.connect(self._on_load_finished)
+        # Handle new window requests (target="_blank" or Ctrl+click) by opening in new tab
+        page.createWindow = lambda type_, v=view: self._on_create_window_requested(type_)
+
+        stack_idx = self.tab_stack.addWidget(view)
+        tab_idx = self.tab_bar.addTab(title)
+        self.tab_bar.setCurrentIndex(tab_idx)
+        self.tab_stack.setCurrentIndex(stack_idx)
+
+        # Navigate new tab
+        normalized_url = self.service.normalize_url(raw_url)
+        if normalized_url == "about:blank":
+            view.setHtml(self._render_blank_page())
+        else:
+            view.setUrl(QUrl(normalized_url))
+
+        return tab_idx
+
+    def close_tab(self, index: int) -> None:
+        """Close specified tab index."""
+        if self.tab_bar.count() <= 1:
+            # If closing sole tab, reset to blank start page
+            self.navigate("about:blank")
+            self.tab_bar.setTabText(0, "New Tab")
+            return
+
+        widget = self.tab_stack.widget(index)
+        if widget:
+            self.tab_stack.removeWidget(widget)
+            widget.deleteLater()
+        self.tab_bar.removeTab(index)
+
+    def _on_create_window_requested(self, type_: QWebEnginePage.WebWindowType) -> QWebEnginePage:
+        """Handle target='_blank' link clicks by creating a new tab."""
+        new_tab_idx = self.add_new_tab("about:blank", "Loading...")
+        new_view = self.tab_stack.widget(new_tab_idx)
+        return new_view.page()
+
+    def _on_tab_changed(self, index: int) -> None:
+        """Handle active tab switching."""
+        if 0 <= index < self.tab_stack.count():
+            self.tab_stack.setCurrentIndex(index)
+            active_view = self.web_view
+            display_url = clean_display_url(active_view.url().toString())
+            self.url_input.setText(display_url)
+            self.btn_back.setEnabled(active_view.history().canGoBack())
+            self.btn_forward.setEnabled(active_view.history().canGoForward())
+            self._update_security_badge(display_url)
+
+    def _on_tab_url_changed(self, view: QWebEngineView, url: QUrl) -> None:
+        if view == self.web_view:
+            display_url = clean_display_url(url.toString())
+            if not self.url_input.hasFocus():
+                self.url_input.setText(display_url)
+            self.btn_back.setEnabled(view.history().canGoBack())
+            self.btn_forward.setEnabled(view.history().canGoForward())
+            self._update_security_badge(display_url)
+
+    def _on_tab_title_changed(self, view: QWebEngineView, title: str) -> None:
+        stack_idx = self.tab_stack.indexOf(view)
+        if 0 <= stack_idx < self.tab_bar.count():
+            clean_title = (title[:18] + "...") if len(title) > 20 else title
+            self.tab_bar.setTabText(stack_idx, clean_title or "New Tab")
+        if view == self.web_view:
+            display_url = clean_display_url(self.url_input.text())
+            self.service.update_navigation_state(display_url, title=title)
+
+    def _on_tab_load_started(self, view: QWebEngineView) -> None:
+        if view == self.web_view:
+            self._is_loading = True
+            self.progress_bar.setValue(10)
+            self.progress_bar.show()
+            self.btn_reload.setIcon(IconManager.get_icon("stop"))
+            self.btn_reload.setToolTip("Stop Loading (Esc)")
+            self.btn_reload.setAccessibleName("Stop Loading")
+
+    def _on_tab_load_progress(self, view: QWebEngineView, progress: int) -> None:
+        if view == self.web_view:
+            self.progress_bar.setValue(progress)
+
+    def _on_tab_load_finished(self, view: QWebEngineView, success: bool) -> None:
+        if view == self.web_view:
+            self._is_loading = False
+            self.progress_bar.hide()
+            self.btn_reload.setIcon(IconManager.get_icon("reload"))
+            self.btn_reload.setToolTip("Reload (F5)")
+            self.btn_reload.setAccessibleName("Reload Page")
+            self.btn_back.setEnabled(view.history().canGoBack())
+            self.btn_forward.setEnabled(view.history().canGoForward())
+
+            display_url = clean_display_url(self.url_input.text())
+            if not success and display_url not in ("about:blank", ""):
+                view.setHtml(self._render_error_page(display_url))
+
+    def _update_security_badge(self, display_url: str) -> None:
+        if display_url.startswith("https://"):
+            self.lbl_security.setPixmap(IconManager.get_icon("shield", "#A6E3A1").pixmap(16, 16))
+            self.lbl_security.setToolTip("Secure HTTPS Connection")
+        else:
+            self.lbl_security.setPixmap(IconManager.get_icon("info", "#F9E2AF").pixmap(16, 16))
+            self.lbl_security.setToolTip("Non-HTTPS or Local Address")
 
     def navigate(self, raw_url: str) -> None:
         """Normalize URL via BrowserService and navigate QWebEngineView."""
@@ -332,6 +516,22 @@ class BrowserPanel(QWidget):
             event.modifiers() & Qt.KeyboardModifier.AltModifier
         ):
             self._on_forward_clicked()
+            event.accept()
+            return
+
+        if event.key() == Qt.Key.Key_T and (
+            event.modifiers() & Qt.KeyboardModifier.ControlModifier
+        ):
+            self.add_new_tab("about:blank")
+            event.accept()
+            return
+
+        if event.key() == Qt.Key.Key_W and (
+            event.modifiers() & Qt.KeyboardModifier.ControlModifier
+        ):
+            curr_idx = self.tab_bar.currentIndex()
+            if curr_idx >= 0:
+                self.close_tab(curr_idx)
             event.accept()
             return
 
