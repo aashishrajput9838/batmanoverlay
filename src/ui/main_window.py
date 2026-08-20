@@ -348,14 +348,11 @@ class MainWindow(QMainWindow):
             self._apply_native_display_affinity()
             self.activateWindow()
 
-        if result.success and result.file_path:
+        if result.success and result.file_path and result.file_path.exists():
             # 1. Copy screenshot image to system clipboard
-            if result.pixmap and not result.pixmap.isNull():
-                QGuiApplication.clipboard().setImage(result.pixmap.toImage())
-            elif result.file_path.exists():
-                pix = QPixmap(str(result.file_path))
-                if not pix.isNull():
-                    QGuiApplication.clipboard().setImage(pix.toImage())
+            pix = QPixmap(str(result.file_path))
+            if not pix.isNull():
+                QGuiApplication.clipboard().setImage(pix.toImage())
 
             # 2. Register screenshot in BatmanOverlay Clipboard service history
             if self._clipboard_service and hasattr(self._clipboard_service, "add_item"):
